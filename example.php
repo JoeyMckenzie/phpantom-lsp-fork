@@ -43,6 +43,14 @@ use Demo\UserProfile as Profile;
 // completion to see namespace segments (marked with a module/folder icon)
 // appear above class names in the list.
 
+// ── Namespaced Function Completion ──────────────────────────────────────────
+// Namespaced functions are completed with their fully-qualified name in
+// `use function` statements, and with auto-import in inline code.
+//
+// Try: type `use function parse_file` and accept to get `use function ast\parse_file;`
+// Functions in different namespaces with the same short name appear as
+// separate items, each showing their namespace in the detail.
+
 // ── Instance Completion ─────────────────────────────────────────────────────
 
 $user = new User('Alice', 'alice@example.com');

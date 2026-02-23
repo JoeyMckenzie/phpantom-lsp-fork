@@ -109,6 +109,13 @@ fn filter_current_file_classes(
 }
 
 /// Filter out completion items for functions defined in the current file.
+///
+/// Collects the map keys (FQNs) of functions whose URI matches the
+/// current file and removes any completion item whose `insert_text`
+/// matches one of those FQNs.  This works for both use-import items
+/// (where `insert_text` is the FQN) and inline items (where
+/// `insert_text` is a snippet starting with the short name, which
+/// equals the FQN for global functions).
 fn filter_current_file_functions(
     items: Vec<CompletionItem>,
     current_uri: &str,
@@ -121,7 +128,7 @@ fn filter_current_file_functions(
         .map(|fmap| {
             fmap.iter()
                 .filter(|(_, (uri, _))| uri == current_uri)
-                .map(|(_, (_, info))| info.name.clone())
+                .map(|(key, _)| key.clone())
                 .collect()
         })
         .unwrap_or_default();
@@ -131,9 +138,9 @@ fn filter_current_file_functions(
     items
         .into_iter()
         .filter(|item| {
-            item.filter_text
+            item.insert_text
                 .as_ref()
-                .is_none_or(|ft| !current_funcs.contains(ft))
+                .is_none_or(|it| !current_funcs.contains(it))
         })
         .collect()
 }
@@ -989,7 +996,8 @@ impl Backend {
 
         // ── `use function` → only functions ─────────────────────────
         if matches!(class_ctx, ClassNameContext::UseFunction) {
-            let (function_items, func_incomplete) = self.build_function_completions(&partial, true);
+            let (function_items, func_incomplete) =
+                self.build_function_completions(&partial, true, Some(content), &ctx.namespace);
             // Filter out functions defined in the current file.
             let function_items = filter_current_file_functions(function_items, current_uri, self);
             let items = append_semicolon_to_insert_text(function_items);
@@ -1096,7 +1104,8 @@ impl Backend {
         }
 
         let (constant_items, const_incomplete) = self.build_constant_completions(&partial);
-        let (function_items, func_incomplete) = self.build_function_completions(&partial, false);
+        let (function_items, func_incomplete) =
+            self.build_function_completions(&partial, false, Some(content), &ctx.namespace);
 
         if class_items.is_empty() && constant_items.is_empty() && function_items.is_empty() {
             return None;

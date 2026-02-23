@@ -10,54 +10,6 @@ long-tail polish.
 
 ## Completion & Go-to-Definition Gaps
 
-### Next up
-
-#### 39. Namespaced functions treated as global
-
-Functions declared inside a namespace (e.g. `Illuminate\Support\enum_value`)
-appear in completion as bare `enum_value` and auto-import produces
-`use function enum_value;` instead of
-`use function Illuminate\Support\enum_value;`.
-
-**Root cause:** `global_functions` is a flat `HashMap<String, (String, FunctionInfo)>`
-keyed by name. In `update_ast_inner`, namespaced functions are inserted
-under both their FQN (`Illuminate\Support\enum_value`) and their short
-name (`enum_value`). The completion builder in `build_function_completions`
-iterates every entry and uses `info.name` (the short name) for the label,
-insert text, and deduplication. It never reconstructs or displays the FQN.
-
-**Consequences:**
-
-1. **Wrong auto-import.** `use function enum_value;` is emitted instead of
-   `use function Illuminate\Support\enum_value;`. The resulting code is a
-   runtime error unless a global `enum_value` happens to exist.
-2. **Short-name collisions.** Two functions in different namespaces with the
-   same short name shadow each other. The first one inserted into the map
-   under the short-name key wins; the second is silently dropped by
-   `or_insert_with`.
-3. **False global appearance.** Namespaced functions look like they live in
-   the global scope, so users have no way to tell which namespace they
-   belong to.
-
-**Fix:**
-
-- Change `build_function_completions` to be namespace-aware. When a
-  `FunctionInfo` has a non-`None` namespace, use the FQN for the insert
-  text and generate a `use function FQN;` additional text edit (mirroring
-  how class auto-import works).
-- For deduplication, key on FQN rather than short name.
-- Show the namespace in the completion detail (e.g.
-  `"function (Illuminate\\Support)"`) so users can distinguish same-named
-  functions.
-- Consider whether the short-name fallback entry in `global_functions`
-  should be removed entirely, or kept only for genuinely global functions
-  (those with `namespace: None`). Keeping it causes the collision problem;
-  removing it means bare `func()` calls in the same namespace need the
-  resolver's namespace-qualified candidate logic (which already exists in
-  `resolve_function_name`) to find the function.
-
----
-
 ### Competitive parity (close the gap with PHPStorm / Intelephense)
 
 #### 21. No reverse jump: implementation → interface method declaration

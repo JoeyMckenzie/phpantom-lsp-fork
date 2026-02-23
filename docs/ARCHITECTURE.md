@@ -160,8 +160,9 @@ find_or_load_function(["str_contains", "App\\str_contains"])
 │
 ├── Phase 1: global_functions (user code + cached stubs)
 │   Checks all candidate names against the global_functions map.
-│   This is where previously-cached stub functions are found on
-│   subsequent lookups.
+│   Keys are always FQNs: "array_map" for global functions,
+│   "Illuminate\Support\enum_value" for namespaced ones.
+│   No short-name fallback entries are stored.
 │   ↓ miss
 │
 ├── Phase 2: Embedded PHP stubs
@@ -169,7 +170,7 @@ find_or_load_function(["str_contains", "App\\str_contains"])
 │   When found:
 │     1. Parses the entire stub file (extracting all FunctionInfo).
 │     2. Caches ALL functions from that file into global_functions
-│        under phpantom-stub-fn:// URIs.
+│        under phpantom-stub-fn:// URIs (FQN keys only).
 │     3. Also caches any classes defined in the same stub file into
 │        ast_map (so return type references can be resolved).
 │     4. Returns the matching FunctionInfo.
@@ -178,13 +179,23 @@ find_or_load_function(["str_contains", "App\\str_contains"])
 └── None
 ```
 
-The `function_loader` closures in both `server.rs` (completion) and `definition/resolve.rs` (go-to-definition) build a list of candidate names — the bare name, the use-map resolved name, and the namespace-qualified name — then delegate to `find_or_load_function`. This means built-in function return types are available for:
+The `function_loader` closures in both `server.rs` (completion) and `definition/resolve.rs` (go-to-definition) build a list of candidate names — the bare name, the use-map resolved name, and the namespace-qualified name — then delegate to `find_or_load_function`. Because `global_functions` is keyed by FQN only, bare calls like `enum_value()` in namespace `App` succeed via the namespace-qualified candidate `App\enum_value`. This means built-in function return types are available for:
 
 - **Variable type resolution**: `$dt = date_create();` → `$dt` is `DateTime`
 - **Call chain completion**: `date_create()->` offers `format()`, `modify()`, etc.
 - **Nested call resolution**: `simplexml_load_string(...)->xpath(...)` works
 
 User-defined functions in `global_functions` always take precedence over stubs because Phase 1 is checked first — stubs use `entry().or_insert()` to avoid overwriting existing entries.
+
+#### Function Completion: Namespace Awareness
+
+`build_function_completions` handles two modes:
+
+- **`use function` context** (`for_use_import = true`): The insert text is the FQN (e.g. `Illuminate\Support\enum_value`) so the resulting statement reads `use function Illuminate\Support\enum_value;`. The label is the FQN for namespaced functions and the signature for global ones.
+
+- **Inline context** (`for_use_import = false`): The insert text is a snippet using the short name (e.g. `enum_value($0)`). For namespaced functions, an `additional_text_edits` entry inserts `use function FQN;` at the alphabetically correct position, mirroring how class auto-import works. The detail shows the namespace (e.g. `function (Illuminate\Support)`). Functions in the same namespace as the current file do not receive an auto-import.
+
+Deduplication uses the map key (FQN), so two functions with the same short name in different namespaces both appear as separate completion items.
 
 ### Runtime Lookup — Constants
 
@@ -382,7 +393,7 @@ Comma-separated lists are handled by walking past `Identifier,` sequences so tha
 
 `try_class_constant_function_completion()` in `handler.rs` is the entry point. It extracts the partial identifier, detects the context, and branches:
 
-- **`UseFunction`** and **`UseConst`** short-circuit to dedicated builders (`build_function_completions`, `build_constant_completions`). These bypass class-name logic entirely. Items from the current file are filtered out (importing a function from the file you are editing is pointless). A semicolon is appended to the insert text.
+- **`UseFunction`** and **`UseConst`** short-circuit to dedicated builders (`build_function_completions`, `build_constant_completions`). These bypass class-name logic entirely. Items from the current file are filtered out (importing a function from the file you are editing is pointless). A semicolon is appended to the insert text. For `UseFunction`, namespaced functions use their FQN as insert text so the resulting statement reads `use function Illuminate\Support\enum_value;`.
 
 - **`NamespaceDeclaration`** short-circuits to `build_namespace_completions`, which produces namespace-path items from PSR-4 prefixes and known class FQNs.
 

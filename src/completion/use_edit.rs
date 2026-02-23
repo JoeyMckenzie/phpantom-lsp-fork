@@ -36,8 +36,30 @@ impl UseBlockInfo {
     /// If there are no existing imports, returns the fallback position
     /// (after `namespace` or `<?php`).
     pub(crate) fn insert_position_for(&self, fqn: &str) -> Position {
-        let key = fqn.to_lowercase();
+        self.insert_position_for_key(&fqn.to_lowercase())
+    }
 
+    /// Like [`insert_position_for`](Self::insert_position_for) but
+    /// accepts a pre-computed sort key instead of deriving one from the
+    /// FQN.  This is useful for `use function` and `use const` imports
+    /// whose sort keys carry a `"function "` or `"const "` prefix so
+    /// they sort into their own group.
+    ///
+    /// Import statements are organized into three groups that never
+    /// interleave:
+    ///
+    ///   1. **Class** imports (bare `use Foo\Bar;`)
+    ///   2. **Const** imports (`use const Foo\BAR;`)
+    ///   3. **Function** imports (`use function Foo\bar;`)
+    ///
+    /// Within each group the imports are sorted alphabetically.  When
+    /// inserting into a group that already has entries, the new import
+    /// is placed at the correct alphabetical position inside that
+    /// group.  When the target group is empty, the import is placed
+    /// after the last entry of a lower-priority group (or before the
+    /// first entry of a higher-priority group if no lower group
+    /// exists).
+    pub(crate) fn insert_position_for_key(&self, key: &str) -> Position {
         if self.existing.is_empty() {
             return Position {
                 line: self.fallback_line,
@@ -45,23 +67,81 @@ impl UseBlockInfo {
             };
         }
 
-        // Find the first existing use whose sort key is alphabetically
-        // after the new FQN — the new statement goes right before it.
-        for (line, existing_key) in &self.existing {
-            if *existing_key > key {
-                return Position {
-                    line: *line,
-                    character: 0,
-                };
+        let new_group = Self::key_group(key);
+
+        // Collect entries that belong to the same group.
+        let same_group: Vec<&(u32, String)> = self
+            .existing
+            .iter()
+            .filter(|(_, k)| Self::key_group(k) == new_group)
+            .collect();
+
+        if !same_group.is_empty() {
+            // Insert alphabetically within the group.
+            for (line, existing_key) in &same_group {
+                if existing_key.as_str() > key {
+                    return Position {
+                        line: *line,
+                        character: 0,
+                    };
+                }
             }
+            // Sorts after every entry in the group — append after the last one.
+            let last_line = same_group.last().expect("non-empty").0;
+            return Position {
+                line: last_line + 1,
+                character: 0,
+            };
         }
 
-        // New FQN sorts after all existing imports — append after the last one.
-        let last_line = self.existing.last().expect("non-empty checked above").0;
+        // The target group has no entries yet.  Place after the last
+        // entry of a lower-priority group, or before the first entry
+        // of a higher-priority group.
+        let lower: Vec<&(u32, String)> = self
+            .existing
+            .iter()
+            .filter(|(_, k)| Self::key_group(k) < new_group)
+            .collect();
+
+        if let Some(&&(last_line, _)) = lower.last() {
+            return Position {
+                line: last_line + 1,
+                character: 0,
+            };
+        }
+
+        // No lower-priority group — insert before the very first import.
+        let first_line = self.existing.first().expect("non-empty checked above").0;
         Position {
-            line: last_line + 1,
+            line: first_line,
             character: 0,
         }
+    }
+
+    /// Determine which group a sort key belongs to.
+    ///
+    /// Group ordering: class (0) < const (1) < function (2).
+    fn key_group(key: &str) -> u8 {
+        if key.starts_with("function ") {
+            2
+        } else if key.starts_with("const ") {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Check whether the existing use block contains any `use function`
+    /// imports.
+    pub(crate) fn has_function_imports(&self) -> bool {
+        self.existing.iter().any(|(_, k)| Self::key_group(k) == 2)
+    }
+
+    /// Check whether the existing use block contains any class (plain
+    /// `use`) imports — i.e. imports that are neither `use function`
+    /// nor `use const`.
+    pub(crate) fn has_class_imports(&self) -> bool {
+        self.existing.iter().any(|(_, k)| Self::key_group(k) == 0)
     }
 }
 
@@ -263,6 +343,50 @@ pub(crate) fn build_use_edit(
             end: insert_pos,
         },
         new_text: format!("use {};\n", fqn),
+    }])
+}
+
+/// Build an `additional_text_edits` entry that inserts a `use function`
+/// statement for the given fully-qualified function name at the
+/// alphabetically correct position in the file's existing use block.
+///
+/// The sort key is prefixed with `"function "` so that function imports
+/// naturally group after class imports and among other function imports.
+/// When this is the first `use function` being added and there are
+/// existing class imports, a blank line is prepended to visually
+/// separate the two groups (matching PSR-12 / Laravel conventions).
+///
+/// Only produces an edit when the function is namespaced (contains `\`).
+/// Global functions never need importing.  Returns `None` when no import
+/// is required.
+pub(crate) fn build_use_function_edit(
+    fqn: &str,
+    use_block: &UseBlockInfo,
+) -> Option<Vec<TextEdit>> {
+    // Global functions (no namespace separator) never need importing.
+    if !fqn.contains('\\') {
+        return None;
+    }
+
+    // Use a prefixed sort key so function imports sort after class
+    // imports and sit among other function imports.
+    let sort_key = format!("function {}", fqn.to_lowercase());
+    let insert_pos = use_block.insert_position_for_key(&sort_key);
+
+    // When this is the first function import and there are already
+    // class imports, prepend a blank line to separate the groups.
+    let separator = if !use_block.has_function_imports() && use_block.has_class_imports() {
+        "\n"
+    } else {
+        ""
+    };
+
+    Some(vec![TextEdit {
+        range: Range {
+            start: insert_pos,
+            end: insert_pos,
+        },
+        new_text: format!("{}use function {};\n", separator, fqn),
     }])
 }
 
@@ -775,6 +899,145 @@ mod tests {
                 line: 3,
                 character: 0,
             }
+        );
+    }
+
+    // ── build_use_function_edit ─────────────────────────────────────
+
+    #[test]
+    fn build_function_edit_skips_global_function() {
+        let info = UseBlockInfo {
+            existing: vec![],
+            fallback_line: 1,
+        };
+        assert!(
+            build_use_function_edit("array_map", &info).is_none(),
+            "Global function (no backslash) should not produce an import"
+        );
+    }
+
+    #[test]
+    fn build_function_edit_namespaced_no_existing_imports() {
+        let info = UseBlockInfo {
+            existing: vec![],
+            fallback_line: 2,
+        };
+        let edits = build_use_function_edit("Illuminate\\Support\\enum_value", &info)
+            .expect("namespaced function should produce edit");
+        // No existing imports → no blank-line separator.
+        assert_eq!(
+            edits[0].new_text,
+            "use function Illuminate\\Support\\enum_value;\n"
+        );
+        assert_eq!(
+            edits[0].range.start,
+            Position {
+                line: 2,
+                character: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn build_function_edit_sorts_after_class_imports_with_separator() {
+        let content = concat!(
+            "<?php\n",
+            "namespace App;\n",
+            "use App\\Models\\User;\n",
+            "use Symfony\\Component\\HttpKernel;\n",
+            "\n",
+        );
+        let info = analyze_use_block(content);
+        let edits = build_use_function_edit("Illuminate\\Support\\enum_value", &info)
+            .expect("should produce edit");
+
+        // The prefixed sort key `"function illuminate\..."` sorts after
+        // all bare class import keys, so the function import goes after
+        // the last class import (line 3) → insert at line 4.
+        assert_eq!(
+            edits[0].range.start,
+            Position {
+                line: 4,
+                character: 0,
+            },
+            "Function import should be placed after all class imports"
+        );
+        // First function import with existing class imports → blank line separator.
+        assert_eq!(
+            edits[0].new_text, "\nuse function Illuminate\\Support\\enum_value;\n",
+            "Should prepend blank line to separate from class imports"
+        );
+    }
+
+    #[test]
+    fn build_function_edit_no_separator_when_function_group_exists() {
+        let content = concat!(
+            "<?php\n",
+            "namespace App;\n",
+            "use App\\Models\\User;\n",
+            "\n",
+            "use function App\\Helpers\\format_price;\n",
+            "\n",
+        );
+        let info = analyze_use_block(content);
+        let edits = build_use_function_edit("Illuminate\\Support\\enum_value", &info)
+            .expect("should produce edit");
+
+        // There is already a function import → no extra blank line.
+        assert_eq!(
+            edits[0].new_text, "use function Illuminate\\Support\\enum_value;\n",
+            "Should NOT prepend blank line when function group already exists"
+        );
+        // Alphabetically after `app\helpers\format_price` → after line 4.
+        assert_eq!(
+            edits[0].range.start,
+            Position {
+                line: 5,
+                character: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn build_function_edit_alphabetical_among_existing_functions() {
+        let content = concat!(
+            "<?php\n",
+            "use App\\Models\\User;\n",
+            "\n",
+            "use function App\\Helpers\\format_price;\n",
+            "use function Symfony\\String\\u;\n",
+            "\n",
+        );
+        let info = analyze_use_block(content);
+        let edits = build_use_function_edit("Illuminate\\Support\\enum_value", &info)
+            .expect("should produce edit");
+
+        // `function illuminate\...` sorts between `function app\...` and
+        // `function symfony\...` → insert before line 4 (the Symfony line).
+        assert_eq!(
+            edits[0].range.start,
+            Position {
+                line: 4,
+                character: 0,
+            }
+        );
+        assert_eq!(
+            edits[0].new_text, "use function Illuminate\\Support\\enum_value;\n",
+            "No separator needed — already in the function group"
+        );
+    }
+
+    #[test]
+    fn build_function_edit_deeply_namespaced() {
+        let info = UseBlockInfo {
+            existing: vec![],
+            fallback_line: 3,
+        };
+        let edits = build_use_function_edit("Vendor\\Package\\Sub\\Module\\helper_func", &info)
+            .expect("deeply namespaced function should produce edit");
+        assert_eq!(
+            edits[0].new_text,
+            "use function Vendor\\Package\\Sub\\Module\\helper_func;\n"
         );
     }
 }

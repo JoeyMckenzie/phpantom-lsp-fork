@@ -163,13 +163,13 @@ impl Backend {
                     func_info.name.clone()
                 };
 
-                // Insert both the FQN and the short name so that
-                // callers using bare `func()` can resolve.
-                fmap.insert(fqn.clone(), (uri.to_string(), func_info.clone()));
-                if func_info.namespace.is_some() {
-                    fmap.entry(func_info.name.clone())
-                        .or_insert_with(|| (uri.to_string(), func_info));
-                }
+                // Insert under the FQN only.  For namespaced functions
+                // the FQN is `Namespace\name`; for global functions it
+                // is just the bare name.  `resolve_function_name` already
+                // builds namespace-qualified candidates, so a short-name
+                // fallback entry is unnecessary and would cause collisions
+                // when two namespaces define the same short name.
+                fmap.insert(fqn, (uri.to_string(), func_info));
             }
         }
 

@@ -235,14 +235,11 @@ impl Backend {
                             result = Some(func.clone());
                         }
 
-                        // Cache both the FQN and short name so future
-                        // lookups hit Phase 1.
-                        fmap.entry(fqn.clone())
+                        // Cache the FQN so future lookups hit Phase 1.
+                        // No short-name fallback: `resolve_function_name`
+                        // already builds namespace-qualified candidates.
+                        fmap.entry(fqn)
                             .or_insert_with(|| (stub_uri.clone(), func.clone()));
-                        if func.namespace.is_some() {
-                            fmap.entry(func.name.clone())
-                                .or_insert_with(|| (stub_uri.clone(), func.clone()));
-                        }
                     }
                 }
 
