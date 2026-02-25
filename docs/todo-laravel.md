@@ -329,14 +329,6 @@ end-to-end.
 
 ## Implementation sequence
 
-### Step 5: LaravelModelProvider — Builder-as-static
-
-- Load Eloquent Builder, extract public instance methods.
-- Present as static virtual methods on Model subclasses.
-- Handle return type mapping (`static` on Builder → Builder continuation,
-  model template parameter → concrete model class).
-- Tests: verify `User::where()->orderBy()->get()` chain resolves.
-
 ### Step 6: Completion builder adjustments
 
 - Virtual methods that are marked as "static forwarded" need to appear in
@@ -344,15 +336,6 @@ end-to-end.
   instance method. The `build_completion_items` filter in `builder.rs`
   should respect whatever flag the provider sets.
 - Virtual properties from relationships should appear in `Arrow` completion.
-
-### Step 7: Go-to-definition support
-
-- When go-to-definition lands on a virtual property (relationship), jump to
-  the relationship method definition.
-- When go-to-definition lands on a virtual method (scope), jump to the
-  `scope*` method definition.
-- When go-to-definition lands on a forwarded Builder method, jump to the
-  Builder method definition.
 
 ---
 

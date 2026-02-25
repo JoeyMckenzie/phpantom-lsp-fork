@@ -1915,15 +1915,23 @@ async fn test_completion_variables_at_eof_with_actual_example_php() {
     let base_content =
         std::fs::read_to_string("example.php").expect("example.php must exist in the project root");
 
-    // Scenario: user appends "$" on a new line at the end.
-    // base_content already ends with "\n", so we just append "$\n".
-    let text = format!("{}$\n", base_content);
-    let line_count = text.lines().count() as u32;
+    // Scenario: user types "$" at the end of the main namespace block.
+    // example.php uses braced `namespace Demo { ... }` with Illuminate
+    // stubs in separate namespace blocks after it.  Insert "$\n" just
+    // before the closing "} // end namespace Demo" line so the cursor
+    // is inside the Demo namespace where the top-level variables live.
+    let marker = "} // end namespace Demo";
+    let insert_pos = base_content
+        .find(marker)
+        .expect("example.php must contain '} // end namespace Demo'");
+    let text = format!(
+        "{}$\n{}",
+        &base_content[..insert_pos],
+        &base_content[insert_pos..]
+    );
 
-    // The `$` is on the last non-empty line (line_count - 2, since
-    // trailing \n produces an empty final line that .lines() drops,
-    // but the `$` line is the last element returned by .lines()).
-    let dollar_line = line_count - 1; // 0-indexed, last line from .lines()
+    // Count lines up to the inserted "$" to find its 0-indexed line number.
+    let dollar_line = base_content[..insert_pos].matches('\n').count() as u32;
 
     let items = complete_at(&backend, &uri, &text, dollar_line, 1).await;
 

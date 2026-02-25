@@ -120,6 +120,7 @@ mod tests {
             trait_precedences: Vec::new(),
             trait_aliases: Vec::new(),
             class_docblock: None,
+            file_namespace: None,
         }
     }
 

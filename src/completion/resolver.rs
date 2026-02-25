@@ -172,6 +172,34 @@ fn split_last_arrow(subject: &str) -> Option<(&str, &str)> {
     Some((base, prop))
 }
 
+/// Find a class in `all_classes` by name, preferring namespace-aware
+/// matching when the name is fully qualified.
+///
+/// When `name` contains backslashes (e.g. `Illuminate\Database\Eloquent\Builder`),
+/// the lookup checks each candidate's `file_namespace` field so that the
+/// correct class is returned even when multiple classes share the same short
+/// name but live in different namespace blocks within the same file (e.g.
+/// `Demo\Builder` vs `Illuminate\Database\Eloquent\Builder`).
+///
+/// When `name` is a bare short name (no backslashes), the first class with
+/// a matching `name` field is returned (preserving existing behavior).
+pub(crate) fn find_class_by_name<'a>(
+    all_classes: &'a [ClassInfo],
+    name: &str,
+) -> Option<&'a ClassInfo> {
+    let clean = name.strip_prefix('\\').unwrap_or(name);
+    let short = short_name(clean);
+
+    if clean.contains('\\') {
+        let expected_ns = clean.rsplit_once('\\').map(|(ns, _)| ns);
+        all_classes
+            .iter()
+            .find(|c| c.name == short && c.file_namespace.as_deref() == expected_ns)
+    } else {
+        all_classes.iter().find(|c| c.name == short)
+    }
+}
+
 impl Backend {
     /// Resolve a completion subject to all candidate class types.
     ///
@@ -197,8 +225,7 @@ impl Backend {
                 && let Some(ref parent_name) = cc.parent_class
             {
                 // Try local lookup first
-                let lookup = short_name(parent_name);
-                if let Some(cls) = all_classes.iter().find(|c| c.name == lookup) {
+                if let Some(cls) = find_class_by_name(all_classes, parent_name) {
                     return vec![cls.clone()];
                 }
                 // Fall back to cross-file / PSR-4
@@ -217,8 +244,7 @@ impl Backend {
             && !subject.ends_with(')')
             && let Some((class_part, _case_part)) = subject.split_once("::")
         {
-            let lookup = short_name(class_part);
-            if let Some(cls) = all_classes.iter().find(|c| c.name == lookup) {
+            if let Some(cls) = find_class_by_name(all_classes, class_part) {
                 return vec![cls.clone()];
             }
             return class_loader(class_part).into_iter().collect();
@@ -230,8 +256,7 @@ impl Backend {
             && !subject.contains("::")
             && !subject.ends_with(')')
         {
-            let lookup = short_name(subject);
-            if let Some(cls) = all_classes.iter().find(|c| c.name == lookup) {
+            if let Some(cls) = find_class_by_name(all_classes, subject) {
                 return vec![cls.clone()];
             }
             // Try cross-file / PSR-4 with the full subject
@@ -391,10 +416,7 @@ impl Backend {
                 // Parenthesized (or bare) `new` expression:
                 //   `(new Builder())`, `(new Builder)`, `new Builder()`
                 // Resolve the class name to a ClassInfo.
-                let lookup = short_name(&class_name);
-                all_classes
-                    .iter()
-                    .find(|c| c.name == lookup)
+                find_class_by_name(all_classes, &class_name)
                     .cloned()
                     .or_else(|| class_loader(&class_name))
                     .into_iter()
@@ -469,10 +491,7 @@ impl Backend {
                     .and_then(|p| class_loader(p))
             } else {
                 // Bare class name
-                let lookup = short_name(class_part);
-                all_classes
-                    .iter()
-                    .find(|c| c.name == lookup)
+                find_class_by_name(all_classes, class_part)
                     .cloned()
                     .or_else(|| class_loader(class_part))
             };
@@ -658,6 +677,17 @@ impl Backend {
 
             // Fall back to plain return type
             if let Some(ref ret) = method.return_type {
+                // When the return type is `static`, `self`, or `$this`,
+                // return the owning class directly.  This avoids a lookup
+                // by short name (e.g. "Builder") which fails when the
+                // class was loaded cross-file and the short name is not
+                // in the current file's use-map or local classes.
+                // Returning class_info preserves any generic substitutions
+                // already applied (e.g. Builder<User> stays Builder<User>).
+                let trimmed = ret.trim();
+                if trimmed == "static" || trimmed == "self" || trimmed == "$this" {
+                    return vec![class_info.clone()];
+                }
                 return Self::type_hint_to_classes(
                     ret,
                     &class_info.name,
@@ -980,12 +1010,17 @@ impl Backend {
         // For class lookup, strip any remaining generics from the base
         // (should already be clean, but defensive) and use the short name.
         let base_clean = strip_generics(base_hint.strip_prefix('\\').unwrap_or(base_hint));
-        let lookup = short_name(&base_clean);
+        let short = short_name(&base_clean);
 
-        // Try local (current-file) lookup by last segment
-        let found = all_classes
-            .iter()
-            .find(|c| c.name == lookup)
+        // Try local (current-file) lookup by last segment.
+        //
+        // When the type hint is namespace-qualified (e.g.
+        // `Illuminate\Database\Eloquent\Builder`), match against each
+        // class's `file_namespace` so that we pick the right one when
+        // multiple classes share the same short name but live in
+        // different namespace blocks (e.g. `Demo\Builder` vs
+        // `Illuminate\Database\Eloquent\Builder` in example.php).
+        let found = find_class_by_name(all_classes, &base_clean)
             .cloned()
             .or_else(|| class_loader(base_hint));
 
@@ -993,8 +1028,16 @@ impl Backend {
             Some(cls) => {
                 // Apply generic substitution if the type hint carried
                 // generic arguments and the class has template parameters.
+                // Resolve the class fully first (including trait methods,
+                // parent methods, and virtual members) so that methods
+                // inherited from traits also receive the substitution.
+                // Without this, a method like `first()` inherited from
+                // `BuildsQueries` via `@use BuildsQueries<TModel>` would
+                // keep its raw `TModel` return type instead of being
+                // substituted to the concrete model class.
                 if !generic_args.is_empty() && !cls.template_params.is_empty() {
-                    vec![apply_generic_args(&cls, &generic_args)]
+                    let resolved = Self::resolve_class_fully(&cls, class_loader);
+                    vec![apply_generic_args(&resolved, &generic_args)]
                 } else {
                     vec![cls]
                 }
@@ -1017,8 +1060,8 @@ impl Backend {
 
                 // Try class-level template param bounds on the owning class.
                 if let Some(owner) = owning
-                    && owner.template_params.contains(&lookup.to_string())
-                    && let Some(bound) = owner.template_param_bounds.get(lookup)
+                    && owner.template_params.contains(&short.to_string())
+                    && let Some(bound) = owner.template_param_bounds.get(short)
                 {
                     return Self::type_hint_to_classes_depth(
                         bound,

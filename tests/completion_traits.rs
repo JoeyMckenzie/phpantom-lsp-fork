@@ -3428,3 +3428,197 @@ async fn test_completion_trait_property_fqn_var_type() {
         _ => panic!("Expected CompletionResponse::Array"),
     }
 }
+
+// ─── $this return type from trait methods ────────────────────────────────────
+
+#[tokio::test]
+async fn test_this_return_from_trait_method_resolves_to_using_class() {
+    // When a trait method returns `$this`, the resolver should treat it as
+    // the concrete class that uses the trait, not the trait itself.
+    // This allows chaining into methods defined on the class or its parents.
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///trait_this_return.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "trait MakesHttpRequests {\n",
+        "    /** @return $this */\n",
+        "    public function withHeaders(array $headers): static { return $this; }\n",
+        "}\n",
+        "class TestCase {\n",
+        "    public function post(string $uri): string { return ''; }\n",
+        "}\n",
+        "class FeatureTest extends TestCase {\n",
+        "    use MakesHttpRequests;\n",
+        "    public function testSomething() {\n",
+        "        $this->withHeaders([])->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text.to_string(),
+            },
+        })
+        .await;
+
+    // "$this->withHeaders([])->" at line 11, character 33
+    let result = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: 11,
+                    character: 33,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_some(), "Should return completion results");
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+
+            assert!(
+                method_names.contains(&"post"),
+                "withHeaders() returns $this which should resolve to FeatureTest, offering post() from parent TestCase, got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"withHeaders"),
+                "Should also offer withHeaders() from the trait for further chaining, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+#[tokio::test]
+async fn test_this_return_from_trait_method_cross_file() {
+    // Cross-file variant: the trait, parent class, and child class live in
+    // separate files loaded via PSR-4.  When the trait method returns `$this`,
+    // it should resolve to the concrete class so that parent methods are
+    // available for chaining.
+    let composer = r#"{
+        "autoload": {
+            "psr-4": {
+                "App\\": "src/",
+                "App\\Traits\\": "src/Traits/",
+                "App\\Http\\": "src/Http/"
+            }
+        }
+    }"#;
+
+    let trait_php = "\
+<?php
+namespace App\\Traits;
+trait MakesHttpRequests {
+    /** @return $this */
+    public function withHeaders(array $headers): static { return $this; }
+    /** @return $this */
+    public function withCookies(array $cookies): static { return $this; }
+}
+";
+
+    let base_php = "\
+<?php
+namespace App\\Http;
+class TestCase {
+    public function post(string $uri): string { return ''; }
+    public function get(string $uri): string { return ''; }
+}
+";
+
+    let feature_php = "\
+<?php
+namespace App\\Http;
+use App\\Traits\\MakesHttpRequests;
+class FeatureTest extends TestCase {
+    use MakesHttpRequests;
+    public function testSomething() {
+        $this->withHeaders([])->
+    }
+}
+";
+
+    let (backend, dir) = create_psr4_workspace(
+        composer,
+        &[
+            ("src/Traits/MakesHttpRequests.php", trait_php),
+            ("src/Http/TestCase.php", base_php),
+            ("src/Http/FeatureTest.php", feature_php),
+        ],
+    );
+
+    let uri = Url::from_file_path(dir.path().join("src/Http/FeatureTest.php")).unwrap();
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: feature_php.to_string(),
+            },
+        })
+        .await;
+
+    // "$this->withHeaders([])->" at line 6, character 33
+    let result = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: 6,
+                    character: 33,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_some(), "Should return completion results");
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+
+            assert!(
+                method_names.contains(&"post"),
+                "withHeaders() returns $this, should resolve to FeatureTest offering post() from parent TestCase, got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"get"),
+                "Should also offer get() from parent TestCase, got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"withCookies"),
+                "Should offer withCookies() from the trait for further chaining, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}

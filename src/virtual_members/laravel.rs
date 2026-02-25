@@ -21,8 +21,24 @@
 //!   `active`, `verified`).  The first `$query` parameter is removed.
 //!   Scope methods are available as both static and instance methods
 //!   so they resolve for `User::active()` and `$user->active()`.
+//!
+//! - **Builder-as-static forwarding.** Laravel's `Model::__callStatic()`
+//!   forwards static calls to `static::query()`, which returns an
+//!   Eloquent Builder.  This provider loads
+//!   `\Illuminate\Database\Eloquent\Builder`, fully resolves it
+//!   (including its `@mixin` on `Query\Builder`), and presents its
+//!   public instance methods as static virtual methods on the model.
+//!   Return types are mapped so that `static`/`$this`/`self` resolve
+//!   to `Builder<ConcreteModel>` (the chain continues on the builder)
+//!   and template parameters like `TModel` resolve to the concrete
+//!   model class.  This makes `User::where(...)->orderBy(...)->get()`
+//!   resolve end-to-end.
 
+use std::collections::HashMap;
+
+use crate::Backend;
 use crate::docblock::types::parse_generic_args;
+use crate::inheritance::apply_substitution;
 use crate::types::{ClassInfo, MAX_INHERITANCE_DEPTH, MethodInfo, PropertyInfo, Visibility};
 
 use super::{VirtualMemberProvider, VirtualMembers};
@@ -52,6 +68,9 @@ const MORPH_TO: &str = "MorphTo";
 /// type or return `void`.
 const DEFAULT_SCOPE_RETURN_TYPE: &str = "\\Illuminate\\Database\\Eloquent\\Builder<static>";
 
+/// The fully-qualified name of the Eloquent Builder class.
+pub const ELOQUENT_BUILDER_FQN: &str = "Illuminate\\Database\\Eloquent\\Builder";
+
 /// Virtual member provider for Laravel Eloquent models.
 ///
 /// When a class extends `Illuminate\Database\Eloquent\Model` (directly
@@ -78,7 +97,7 @@ fn is_eloquent_model(class_name: &str) -> bool {
 /// `Illuminate\Database\Eloquent\Model`.
 ///
 /// Returns `true` if the class itself is `Model` or any ancestor is.
-fn extends_eloquent_model(
+pub fn extends_eloquent_model(
     class: &ClassInfo,
     class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
 ) -> bool {
@@ -271,6 +290,91 @@ fn build_scope_methods(method: &MethodInfo) -> [MethodInfo; 2] {
     [instance_method, static_method]
 }
 
+/// Build static virtual methods by forwarding Eloquent Builder's public
+/// instance methods onto the model class.
+///
+/// Laravel's `Model::__callStatic()` delegates static calls to
+/// `static::query()`, which returns a `Builder<static>`.  This function
+/// loads the Builder class, fully resolves it (including `@mixin`
+/// `Query\Builder` members), and converts each public instance method
+/// into a static virtual method on the model.
+///
+/// Return type mapping:
+/// - `static`, `$this`, `self` → `\Illuminate\Database\Eloquent\Builder<ConcreteModel>`
+///   (the chain continues on the builder, not the model).
+/// - Template parameters (e.g. `TModel`) → the concrete model class name.
+///
+/// Methods whose name starts with `__` (magic methods) are skipped.
+fn build_builder_forwarded_methods(
+    class: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Vec<MethodInfo> {
+    // Load the Eloquent Builder class.
+    let builder_class = match class_loader(ELOQUENT_BUILDER_FQN) {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+
+    // Fully resolve Builder (own + traits + parents + virtual members
+    // including @mixin Query\Builder).  This is safe because Builder
+    // does not extend Model, so the LaravelModelProvider will not
+    // recurse.
+    let resolved_builder = Backend::resolve_class_fully(&builder_class, class_loader);
+
+    // Build a substitution map: TModel → concrete model class name,
+    // and static/$this/self → Builder<ConcreteModel>.
+    let builder_self_type = format!("\\{ELOQUENT_BUILDER_FQN}<{}>", class.name);
+    let mut subs = HashMap::new();
+    for param in &builder_class.template_params {
+        subs.insert(param.clone(), class.name.clone());
+    }
+    subs.insert("static".to_string(), builder_self_type.clone());
+    subs.insert("$this".to_string(), builder_self_type.clone());
+    subs.insert("self".to_string(), builder_self_type.clone());
+
+    let mut methods = Vec::new();
+
+    for method in &resolved_builder.methods {
+        if method.visibility != Visibility::Public {
+            continue;
+        }
+        // Skip magic methods (__construct, __call, etc.).
+        if method.name.starts_with("__") {
+            continue;
+        }
+        // Skip methods already present on the model (real methods,
+        // scope methods, etc.).  The merge logic in
+        // `merge_virtual_members` would also skip them, but filtering
+        // here avoids unnecessary cloning and substitution work.
+        if class
+            .methods
+            .iter()
+            .any(|m| m.name == method.name && m.is_static)
+        {
+            continue;
+        }
+
+        let mut forwarded = method.clone();
+        forwarded.is_static = true;
+
+        // Apply template and self-type substitutions.
+        if !subs.is_empty() {
+            if let Some(ref mut ret) = forwarded.return_type {
+                *ret = apply_substitution(ret, &subs);
+            }
+            for param in &mut forwarded.parameters {
+                if let Some(ref mut hint) = param.type_hint {
+                    *hint = apply_substitution(hint, &subs);
+                }
+            }
+        }
+
+        methods.push(forwarded);
+    }
+
+    methods
+}
+
 impl VirtualMemberProvider for LaravelModelProvider {
     /// Returns `true` if the class extends `Illuminate\Database\Eloquent\Model`.
     fn applies_to(
@@ -281,12 +385,12 @@ impl VirtualMemberProvider for LaravelModelProvider {
         extends_eloquent_model(class, class_loader)
     }
 
-    /// Scan the class's methods for Eloquent relationship return types
-    /// and scope methods, synthesizing virtual properties and methods.
+    /// Scan the class's methods for Eloquent relationship return types,
+    /// scope methods, and Builder-as-static forwarded methods.
     fn provide(
         &self,
         class: &ClassInfo,
-        _class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
     ) -> VirtualMembers {
         let mut properties = Vec::new();
         let mut methods = Vec::new();
@@ -324,6 +428,10 @@ impl VirtualMemberProvider for LaravelModelProvider {
                 });
             }
         }
+
+        // ── Builder-as-static forwarding ────────────────────────────
+        let forwarded = build_builder_forwarded_methods(class, class_loader);
+        methods.extend(forwarded);
 
         VirtualMembers {
             methods,
@@ -367,6 +475,7 @@ mod tests {
             trait_precedences: Vec::new(),
             trait_aliases: Vec::new(),
             class_docblock: None,
+            file_namespace: None,
         }
     }
 
@@ -1290,5 +1399,519 @@ mod tests {
             instance.return_type.as_deref(),
             Some("\\App\\Builders\\UserBuilder")
         );
+    }
+
+    // ── Builder-as-static forwarding (unit tests) ───────────────────────
+
+    /// Helper: create a minimal Builder class with template params and methods.
+    fn make_builder(methods: Vec<MethodInfo>) -> ClassInfo {
+        let mut builder = make_class(ELOQUENT_BUILDER_FQN);
+        builder.template_params = vec!["TModel".to_string()];
+        builder.methods = methods;
+        builder
+    }
+
+    #[test]
+    fn builder_forwarding_returns_empty_when_builder_not_found() {
+        let class = make_class("App\\Models\\User");
+        let result = build_builder_forwarded_methods(&class, &no_loader);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn builder_forwarding_converts_instance_to_static() {
+        let mut builder = make_builder(vec![make_method("where", Some("static"))]);
+        builder.methods[0].is_static = false;
+
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].is_static, "Forwarded method should be static");
+        assert_eq!(result[0].name, "where");
+    }
+
+    #[test]
+    fn builder_forwarding_maps_static_to_builder_self_type() {
+        let builder = make_builder(vec![make_method("where", Some("static"))]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].return_type.as_deref(),
+            Some("\\Illuminate\\Database\\Eloquent\\Builder<App\\Models\\User>"),
+            "static should map to Builder<ConcreteModel>"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_maps_this_to_builder_self_type() {
+        let builder = make_builder(vec![make_method("orderBy", Some("$this"))]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].return_type.as_deref(),
+            Some("\\Illuminate\\Database\\Eloquent\\Builder<App\\Models\\User>"),
+            "$this should map to Builder<ConcreteModel>"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_maps_self_to_builder_self_type() {
+        let builder = make_builder(vec![make_method("limit", Some("self"))]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].return_type.as_deref(),
+            Some("\\Illuminate\\Database\\Eloquent\\Builder<App\\Models\\User>"),
+            "self should map to Builder<ConcreteModel>"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_maps_tmodel_to_concrete_class() {
+        let builder = make_builder(vec![make_method("first", Some("TModel|null"))]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].return_type.as_deref(),
+            Some("App\\Models\\User|null"),
+            "TModel should map to the concrete model class"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_maps_generic_collection_return() {
+        let builder = make_builder(vec![make_method(
+            "get",
+            Some("\\Illuminate\\Database\\Eloquent\\Collection<int, TModel>"),
+        )]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].return_type.as_deref(),
+            Some("\\Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\User>"),
+            "Collection<int, TModel> should become Collection<int, User>"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_maps_static_in_union() {
+        let builder = make_builder(vec![make_method("whereNull", Some("static|null"))]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].return_type.as_deref(),
+            Some("\\Illuminate\\Database\\Eloquent\\Builder<App\\Models\\User>|null"),
+            "static|null should become Builder<User>|null"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_skips_magic_methods() {
+        let builder = make_builder(vec![
+            make_method("where", Some("static")),
+            make_method("__construct", None),
+            make_method("__call", Some("mixed")),
+        ]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(
+            result.len(),
+            1,
+            "Only non-magic methods should be forwarded"
+        );
+        assert_eq!(result[0].name, "where");
+    }
+
+    #[test]
+    fn builder_forwarding_skips_non_public_methods() {
+        let mut builder = make_builder(vec![
+            make_method("where", Some("static")),
+            make_method("internalHelper", Some("void")),
+        ]);
+        builder.methods[1].visibility = Visibility::Protected;
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1, "Only public methods should be forwarded");
+        assert_eq!(result[0].name, "where");
+    }
+
+    #[test]
+    fn builder_forwarding_skips_methods_already_on_model() {
+        let builder = make_builder(vec![
+            make_method("where", Some("static")),
+            make_method("myMethod", Some("void")),
+        ]);
+        let mut user = make_class("App\\Models\\User");
+        // The model has a static method named "myMethod" already.
+        let mut existing = make_method("myMethod", Some("string"));
+        existing.is_static = true;
+        user.methods.push(existing);
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(
+            result.len(),
+            1,
+            "Should skip 'myMethod' because the model already has it as static"
+        );
+        assert_eq!(result[0].name, "where");
+    }
+
+    #[test]
+    fn builder_forwarding_does_not_skip_instance_method_with_same_name() {
+        // If the model has an instance method named "where", the static
+        // forwarded Builder method should still appear since they differ
+        // in staticness.
+        let builder = make_builder(vec![make_method("where", Some("static"))]);
+        let mut user = make_class("App\\Models\\User");
+        let mut existing = make_method("where", Some("string"));
+        existing.is_static = false;
+        user.methods.push(existing);
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(
+            result.len(),
+            1,
+            "Static forwarded method should be added even when an instance method with the same name exists"
+        );
+        assert!(result[0].is_static);
+    }
+
+    #[test]
+    fn builder_forwarding_maps_parameter_types() {
+        let builder = make_builder(vec![make_method_with_params(
+            "find",
+            Some("TModel|null"),
+            vec![make_param("$id", Some("TModel"), true)],
+        )]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].parameters[0].type_hint.as_deref(),
+            Some("App\\Models\\User"),
+            "Parameter TModel should map to the concrete model class"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_preserves_method_metadata() {
+        let mut builder = make_builder(vec![make_method_with_params(
+            "where",
+            Some("static"),
+            vec![
+                make_param("$column", Some("string"), true),
+                make_param("$value", Some("mixed"), false),
+            ],
+        )]);
+        builder.methods[0].is_deprecated = true;
+
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert!(
+            result[0].is_deprecated,
+            "Deprecated flag should be preserved"
+        );
+        assert_eq!(result[0].parameters.len(), 2);
+        assert_eq!(result[0].parameters[0].name, "$column");
+        assert!(!result[0].parameters[1].is_required);
+    }
+
+    #[test]
+    fn builder_forwarding_multiple_methods() {
+        let builder = make_builder(vec![
+            make_method("where", Some("static")),
+            make_method("orderBy", Some("static")),
+            make_method(
+                "get",
+                Some("\\Illuminate\\Database\\Eloquent\\Collection<int, TModel>"),
+            ),
+            make_method("first", Some("TModel|null")),
+        ]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 4);
+        let names: Vec<&str> = result.iter().map(|m| m.name.as_str()).collect();
+        assert!(names.contains(&"where"));
+        assert!(names.contains(&"orderBy"));
+        assert!(names.contains(&"get"));
+        assert!(names.contains(&"first"));
+        assert!(result.iter().all(|m| m.is_static));
+    }
+
+    #[test]
+    fn provide_includes_builder_forwarded_methods() {
+        let provider = LaravelModelProvider;
+        let mut user = make_class("App\\Models\\User");
+        user.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
+
+        let model = make_class("Illuminate\\Database\\Eloquent\\Model");
+        let builder = make_builder(vec![
+            make_method("where", Some("static")),
+            make_method(
+                "get",
+                Some("\\Illuminate\\Database\\Eloquent\\Collection<int, TModel>"),
+            ),
+        ]);
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == "Illuminate\\Database\\Eloquent\\Model" {
+                Some(model.clone())
+            } else if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = provider.provide(&user, &loader);
+
+        let static_methods: Vec<&str> = result
+            .methods
+            .iter()
+            .filter(|m| m.is_static)
+            .map(|m| m.name.as_str())
+            .collect();
+        assert!(
+            static_methods.contains(&"where"),
+            "Builder's where() should be forwarded as static, got: {:?}",
+            static_methods
+        );
+        assert!(
+            static_methods.contains(&"get"),
+            "Builder's get() should be forwarded as static, got: {:?}",
+            static_methods
+        );
+    }
+
+    #[test]
+    fn provide_scope_beats_builder_method_with_same_name() {
+        // If the model has a scopeWhere method AND Builder has a where
+        // method, both produce static methods named "where". The scope's
+        // version is added first, and merge_virtual_members would
+        // deduplicate. But within the provider itself, the scope method
+        // is added first, and build_builder_forwarded_methods skips
+        // methods already on the class. However, scope methods are added
+        // to the `methods` vec, not to the class itself, so the builder
+        // dedup is based on class.methods (real methods + inherited).
+        // The merge_virtual_members in mod.rs handles the final dedup.
+        //
+        // Here we just verify that both are produced (the dedup happens
+        // at the merge layer).
+        let provider = LaravelModelProvider;
+        let mut user = make_class("App\\Models\\User");
+        user.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
+        user.methods.push(make_method_with_params(
+            "scopeWhere",
+            Some("void"),
+            vec![make_param("$query", Some("Builder"), true)],
+        ));
+
+        let model = make_class("Illuminate\\Database\\Eloquent\\Model");
+        let builder = make_builder(vec![make_method("where", Some("static"))]);
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == "Illuminate\\Database\\Eloquent\\Model" {
+                Some(model.clone())
+            } else if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = provider.provide(&user, &loader);
+
+        // Scope produces both static and instance "where".
+        // Builder forwarding also produces a static "where".
+        // merge_virtual_members will keep the first (scope) static one.
+        let static_wheres: Vec<_> = result
+            .methods
+            .iter()
+            .filter(|m| m.name == "where" && m.is_static)
+            .collect();
+        assert!(
+            !static_wheres.is_empty(),
+            "At least one static 'where' should exist from scope"
+        );
+        // The scope version has the default builder return type.
+        assert_eq!(
+            static_wheres[0].return_type.as_deref(),
+            Some("\\Illuminate\\Database\\Eloquent\\Builder<static>"),
+            "First static 'where' should be from the scope (added first)"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_with_no_return_type() {
+        let builder = make_builder(vec![make_method("doSomething", None)]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 1);
+        assert!(
+            result[0].return_type.is_none(),
+            "None return type should stay None"
+        );
+    }
+
+    #[test]
+    fn builder_forwarding_preserves_non_template_return_types() {
+        let builder = make_builder(vec![
+            make_method("toSql", Some("string")),
+            make_method("exists", Some("bool")),
+        ]);
+        let user = make_class("App\\Models\\User");
+
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == ELOQUENT_BUILDER_FQN {
+                Some(builder.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = build_builder_forwarded_methods(&user, &loader);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].return_type.as_deref(), Some("string"));
+        assert_eq!(result[1].return_type.as_deref(), Some("bool"));
     }
 }

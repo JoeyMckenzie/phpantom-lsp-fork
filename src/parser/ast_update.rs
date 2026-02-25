@@ -62,8 +62,15 @@ impl Backend {
             content,
         };
 
-        // Extract all three in a single parse pass
-        let mut classes = Vec::new();
+        // Extract all three in a single parse pass.
+        //
+        // `classes_with_ns` tracks each extracted class together with the
+        // namespace block it was declared in.  This is critical for files
+        // that contain multiple `namespace { }` blocks (e.g. example.php
+        // places demo classes in `Demo` and Illuminate stubs in their own
+        // namespace blocks).  The per-class namespace is used later when
+        // building the `class_index` and when resolving parent/trait names.
+        let mut classes_with_ns: Vec<(ClassInfo, Option<String>)> = Vec::new();
         let mut use_map = HashMap::new();
         let mut namespace: Option<String> = None;
 
@@ -73,13 +80,21 @@ impl Backend {
                     Self::extract_use_items(&use_stmt.items, &mut use_map);
                 }
                 Statement::Namespace(ns) => {
-                    // Capture namespace name
-                    if let Some(ident) = &ns.name {
-                        let name = ident.value();
-                        if !name.is_empty() && namespace.is_none() {
-                            namespace = Some(name.to_string());
-                        }
+                    // Determine the namespace for this block.
+                    let block_ns: Option<String> = ns
+                        .name
+                        .as_ref()
+                        .map(|ident| ident.value().to_string())
+                        .filter(|n| !n.is_empty());
+
+                    // The file-level namespace is the FIRST non-empty one.
+                    if namespace.is_none() {
+                        namespace = block_ns.clone();
                     }
+
+                    // Collect classes from this namespace block, tagging
+                    // each with the block's namespace.
+                    let mut block_classes = Vec::new();
                     // Recurse into namespace body for classes and use statements
                     for inner in ns.statements().iter() {
                         match inner {
@@ -92,7 +107,7 @@ impl Backend {
                             | Statement::Enum(_) => {
                                 Self::extract_classes_from_statements(
                                     std::iter::once(inner),
-                                    &mut classes,
+                                    &mut block_classes,
                                     Some(&doc_ctx),
                                 );
                             }
@@ -104,7 +119,7 @@ impl Backend {
                                 );
                                 Self::extract_classes_from_statements(
                                     inner_ns.statements().iter(),
-                                    &mut classes,
+                                    &mut block_classes,
                                     Some(&doc_ctx),
                                 );
                             }
@@ -113,32 +128,45 @@ impl Backend {
                                 // control flow, etc.) for anonymous classes.
                                 Self::find_anonymous_classes_in_statement(
                                     inner,
-                                    &mut classes,
+                                    &mut block_classes,
                                     Some(&doc_ctx),
                                 );
                             }
                         }
+                    }
+
+                    // Tag each class with the namespace of this block.
+                    for cls in block_classes {
+                        classes_with_ns.push((cls, block_ns.clone()));
                     }
                 }
                 Statement::Class(_)
                 | Statement::Interface(_)
                 | Statement::Trait(_)
                 | Statement::Enum(_) => {
+                    let mut top_classes = Vec::new();
                     Self::extract_classes_from_statements(
                         std::iter::once(statement),
-                        &mut classes,
+                        &mut top_classes,
                         Some(&doc_ctx),
                     );
+                    for cls in top_classes {
+                        classes_with_ns.push((cls, None));
+                    }
                 }
                 _ => {
                     // Walk other top-level statements (expression statements,
                     // function declarations, control flow, etc.) for anonymous
                     // classes.
+                    let mut anon_classes = Vec::new();
                     Self::find_anonymous_classes_in_statement(
                         statement,
-                        &mut classes,
+                        &mut anon_classes,
                         Some(&doc_ctx),
                     );
+                    for cls in anon_classes {
+                        classes_with_ns.push((cls, None));
+                    }
                 }
             }
         }
@@ -188,9 +216,59 @@ impl Backend {
         }
 
         // Post-process: resolve parent_class short names to fully-qualified
-        // names using the file's use_map and namespace so that cross-file
-        // inheritance resolution can find parent classes via PSR-4.
-        Self::resolve_parent_class_names(&mut classes, &use_map, &namespace);
+        // names using the file's use_map and each class's own namespace so
+        // that cross-file inheritance resolution can find parent classes via
+        // PSR-4.
+        //
+        // For files with multiple namespace blocks, each class's names are
+        // resolved against its own namespace rather than the file-level
+        // default.  This is done by grouping classes by namespace and
+        // calling resolve_parent_class_names once per group.
+        {
+            // Gather distinct namespaces used in this file.
+            let mut ns_groups: HashMap<Option<String>, Vec<usize>> = HashMap::new();
+            for (i, (_cls, ns)) in classes_with_ns.iter().enumerate() {
+                ns_groups.entry(ns.clone()).or_default().push(i);
+            }
+
+            // When all classes share the same namespace, take the fast
+            // path (single call, no extra allocation).
+            if ns_groups.len() <= 1 {
+                let mut classes: Vec<ClassInfo> =
+                    classes_with_ns.iter().map(|(c, _)| c.clone()).collect();
+                Self::resolve_parent_class_names(&mut classes, &use_map, &namespace);
+                // Write back
+                for (i, cls) in classes.into_iter().enumerate() {
+                    classes_with_ns[i].0 = cls;
+                }
+            } else {
+                // Multi-namespace file: resolve each group with its own
+                // namespace context.
+                for (group_ns, indices) in &ns_groups {
+                    let mut group: Vec<ClassInfo> = indices
+                        .iter()
+                        .map(|&i| classes_with_ns[i].0.clone())
+                        .collect();
+                    Self::resolve_parent_class_names(&mut group, &use_map, group_ns);
+                    for (j, &idx) in indices.iter().enumerate() {
+                        classes_with_ns[idx].0 = group[j].clone();
+                    }
+                }
+            }
+        }
+
+        // Separate the classes from their namespace tags for storage,
+        // stamping each ClassInfo with its namespace so that
+        // `find_class_in_ast_map` can distinguish classes with the same
+        // short name in different namespace blocks.
+        let classes: Vec<ClassInfo> = classes_with_ns
+            .iter()
+            .map(|(c, ns)| {
+                let mut cls = c.clone();
+                cls.file_namespace = ns.clone();
+                cls
+            })
+            .collect();
 
         let uri_string = uri.to_string();
 
@@ -198,6 +276,9 @@ impl Backend {
         // found in this file.  This enables reliable lookup of classes that
         // don't follow PSR-4 conventions (e.g. classes defined in Composer
         // autoload_files.php entries).
+        //
+        // Uses the per-class namespace (not the file-level namespace) so
+        // that files with multiple namespace blocks produce correct FQNs.
         if let Ok(mut idx) = self.class_index.lock() {
             // Remove stale entries from previous parses of this file.
             // When a file's namespace changes (e.g. while the user is
@@ -205,14 +286,14 @@ impl Backend {
             // the previous namespace and pollute completions.
             idx.retain(|_, uri| uri != &uri_string);
 
-            for class in &classes {
+            for (class, class_ns) in &classes_with_ns {
                 // Anonymous classes (named `__anonymous@<offset>`) are
                 // internal bookkeeping — they should never appear in
                 // cross-file lookups or completion results.
                 if class.name.starts_with("__anonymous@") {
                     continue;
                 }
-                let fqn = if let Some(ref ns) = namespace {
+                let fqn = if let Some(ns) = class_ns {
                     format!("{}\\{}", ns, &class.name)
                 } else {
                     class.name.clone()
@@ -302,9 +383,30 @@ impl Backend {
             // generics so that after generic substitution, return types
             // and property types are fully-qualified and can be resolved
             // across files via PSR-4.
-            Self::resolve_generics_type_args(&mut class.extends_generics, use_map, namespace);
-            Self::resolve_generics_type_args(&mut class.implements_generics, use_map, namespace);
-            Self::resolve_generics_type_args(&mut class.use_generics, use_map, namespace);
+            //
+            // Template params of the current class must be skipped so
+            // that forwarded params (e.g. `@use BuildsQueries<TModel>`
+            // where TModel is a class-level template) remain as bare
+            // names and match substitution map keys later.
+            let tpl_params = &class.template_params;
+            Self::resolve_generics_type_args(
+                &mut class.extends_generics,
+                use_map,
+                namespace,
+                tpl_params,
+            );
+            Self::resolve_generics_type_args(
+                &mut class.implements_generics,
+                use_map,
+                namespace,
+                tpl_params,
+            );
+            Self::resolve_generics_type_args(
+                &mut class.use_generics,
+                use_map,
+                namespace,
+                tpl_params,
+            );
 
             // Resolve class-like names in method return types and property
             // type hints so that cross-file resolution works correctly.
@@ -393,10 +495,17 @@ impl Backend {
     /// itself is resolved (e.g. `HasFactory` → `App\Concerns\HasFactory`),
     /// and each type argument that looks like a class name (i.e. not a scalar
     /// like `int`, `string`, etc.) is also resolved.
+    ///
+    /// `skip_names` contains template parameter names that must NOT be
+    /// resolved.  Without this, a forwarded template param like `TModel`
+    /// in `@use BuildsQueries<TModel>` would be namespace-qualified to
+    /// e.g. `Illuminate\Database\Eloquent\TModel`, preventing it from
+    /// matching substitution map keys during generic resolution.
     fn resolve_generics_type_args(
         generics: &mut [(String, Vec<String>)],
         use_map: &HashMap<String, String>,
         namespace: &Option<String>,
+        skip_names: &[String],
     ) {
         for (class_name, type_args) in generics.iter_mut() {
             // Resolve the base class/trait/interface name
@@ -410,6 +519,7 @@ impl Backend {
                     && *arg != "static"
                     && *arg != "self"
                     && *arg != "$this"
+                    && !skip_names.contains(arg)
                 {
                     *arg = Self::resolve_name(arg, use_map, namespace);
                 }

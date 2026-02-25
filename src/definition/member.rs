@@ -25,6 +25,7 @@ use crate::subject_extraction::{
 };
 use crate::types::*;
 use crate::util::short_name;
+use crate::virtual_members::laravel::{ELOQUENT_BUILDER_FQN, extends_eloquent_model};
 
 /// The kind of class member being resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +99,16 @@ impl Backend {
         // 4. Try each candidate class and pick the first one where the
         //    member actually exists (directly or via inheritance).
         for target_class in &candidates {
+            // Candidates from resolve_target_classes may be fully-resolved
+            // (merged) classes that include virtual/mixin members directly
+            // in their methods list (e.g. when generic args triggered
+            // resolve_class_fully inside type_hint_to_classes).
+            // find_declaring_class needs the raw (unmerged) class so it
+            // can trace the member to the actual declaring class through
+            // the real inheritance/mixin chain.
+            let raw_class = Self::reload_raw_class(target_class, &ctx.classes, &class_loader);
+            let lookup_class = raw_class.as_ref().unwrap_or(target_class);
+
             // Check if the member name is a trait `as` alias on this class.
             // If so, resolve to the original method name and (optionally) the
             // source trait so we jump to the actual method definition rather
@@ -113,20 +124,58 @@ impl Backend {
                 && Self::classify_member(&trait_info, &effective_name, access_hint).is_some()
                 && let Some((class_uri, class_content)) =
                     self.find_class_file_content(trait_name, uri, content)
-                && let Some(member_position) =
-                    Self::find_member_position(&class_content, &effective_name, MemberKind::Method)
+                && let Some(member_position) = Self::find_member_position_in_range(
+                    &class_content,
+                    &effective_name,
+                    MemberKind::Method,
+                    Some((
+                        trait_info.start_offset as usize,
+                        trait_info.end_offset as usize,
+                    )),
+                )
                 && let Ok(parsed_uri) = Url::parse(&class_uri)
             {
                 return Some(point_location(parsed_uri, member_position));
             }
 
-            let (declaring_class, declaring_fqn) =
-                Self::find_declaring_class(target_class, &effective_name, &class_loader)
-                    .unwrap_or_else(|| (target_class.clone(), target_class.name.clone()));
+            // ── Scope method mapping ────────────────────────────────
+            // Laravel scope methods are defined as `scopeActive()` but
+            // invoked as `active()`.  When the effective name doesn't
+            // exist as a real member, check if `scopeXxx` does and
+            // redirect to that method definition instead.
+            let scope_name = Self::scope_method_name(&effective_name);
+            let (search_name, declaring_class, declaring_fqn) =
+                match Self::find_declaring_class(lookup_class, &effective_name, &class_loader) {
+                    Some((cls, fqn)) => (effective_name.clone(), cls, fqn),
+                    None => {
+                        // Try scope mapping: active → scopeActive
+                        match Self::find_declaring_class(lookup_class, &scope_name, &class_loader) {
+                            Some((cls, fqn)) => (scope_name.clone(), cls, fqn),
+                            None => {
+                                // Try builder-forwarded method: Laravel's
+                                // Model::__callStatic delegates to Builder.
+                                // The real Model has no @mixin, so we check
+                                // explicitly.
+                                match Self::find_builder_forwarded_method(
+                                    lookup_class,
+                                    &effective_name,
+                                    &class_loader,
+                                ) {
+                                    Some((cls, fqn)) => (effective_name.clone(), cls, fqn),
+                                    None => (
+                                        effective_name.clone(),
+                                        target_class.clone(),
+                                        target_class.name.clone(),
+                                    ),
+                                }
+                            }
+                        }
+                    }
+                };
 
             // Check that the member is actually present on the declaring class.
             let member_kind =
-                match Self::classify_member(&declaring_class, &effective_name, access_hint) {
+                match Self::classify_member(&declaring_class, &search_name, access_hint) {
                     Some(k) => k,
                     None => continue, // member not on this candidate, try next
                 };
@@ -134,8 +183,15 @@ impl Backend {
             // Locate the file that contains the declaring class.
             if let Some((class_uri, class_content)) =
                 self.find_class_file_content(&declaring_fqn, uri, content)
-                && let Some(member_position) =
-                    Self::find_member_position(&class_content, &effective_name, member_kind)
+                && let Some(member_position) = Self::find_member_position_in_range(
+                    &class_content,
+                    &search_name,
+                    member_kind,
+                    Some((
+                        declaring_class.start_offset as usize,
+                        declaring_class.end_offset as usize,
+                    )),
+                )
                 && let Ok(parsed_uri) = Url::parse(&class_uri)
             {
                 return Some(point_location(parsed_uri, member_position));
@@ -146,32 +202,66 @@ impl Backend {
         // and try the original (non-iterating) logic so we at least get
         // partial results when possible.
         let target_class = &candidates[0];
+        let raw_fallback = Self::reload_raw_class(target_class, &ctx.classes, &class_loader);
+        let fallback_class = raw_fallback.as_ref().unwrap_or(target_class);
 
         let (effective_name, alias_trait) = Self::resolve_trait_alias(target_class, member_name);
 
         // Direct trait lookup for aliased members in the fallback path.
         if let Some(ref trait_name) = alias_trait
-            && let Some(_trait_info) = class_loader(trait_name)
+            && let Some(ref trait_info) = class_loader(trait_name)
             && let Some((class_uri, class_content)) =
                 self.find_class_file_content(trait_name, uri, content)
-            && let Some(member_position) =
-                Self::find_member_position(&class_content, &effective_name, MemberKind::Method)
+            && let Some(member_position) = Self::find_member_position_in_range(
+                &class_content,
+                &effective_name,
+                MemberKind::Method,
+                Some((
+                    trait_info.start_offset as usize,
+                    trait_info.end_offset as usize,
+                )),
+            )
             && let Ok(parsed_uri) = Url::parse(&class_uri)
         {
             return Some(point_location(parsed_uri, member_position));
         }
 
-        let (declaring_class, declaring_fqn) =
-            Self::find_declaring_class(target_class, &effective_name, &class_loader)
-                .unwrap_or_else(|| (target_class.clone(), target_class.name.clone()));
+        // Try with scope mapping in the fallback path too.
+        let scope_name = Self::scope_method_name(&effective_name);
+        let (search_name, declaring_class, declaring_fqn) =
+            match Self::find_declaring_class(fallback_class, &effective_name, &class_loader) {
+                Some((cls, fqn)) => (effective_name.clone(), cls, fqn),
+                None => {
+                    match Self::find_declaring_class(fallback_class, &scope_name, &class_loader) {
+                        Some((cls, fqn)) => (scope_name, cls, fqn),
+                        None => {
+                            match Self::find_builder_forwarded_method(
+                                fallback_class,
+                                &effective_name,
+                                &class_loader,
+                            ) {
+                                Some((cls, fqn)) => (effective_name.clone(), cls, fqn),
+                                None => return None,
+                            }
+                        }
+                    }
+                }
+            };
 
-        let member_kind = Self::classify_member(&declaring_class, &effective_name, access_hint)?;
+        let member_kind = Self::classify_member(&declaring_class, &search_name, access_hint)?;
 
         let (class_uri, class_content) =
             self.find_class_file_content(&declaring_fqn, uri, content)?;
 
-        let member_position =
-            Self::find_member_position(&class_content, &effective_name, member_kind)?;
+        let member_position = Self::find_member_position_in_range(
+            &class_content,
+            &search_name,
+            member_kind,
+            Some((
+                declaring_class.start_offset as usize,
+                declaring_class.end_offset as usize,
+            )),
+        )?;
 
         let parsed_uri = Url::parse(&class_uri).ok()?;
         Some(point_location(parsed_uri, member_position))
@@ -429,6 +519,85 @@ impl Backend {
     /// If `member_name` matches a trait alias declared on the class, returns
     /// the original method name and (optionally) the source trait name.
     /// Otherwise returns `member_name` unchanged with no trait hint.
+    /// Map a virtual scope method name to the underlying `scopeXxx` method.
+    ///
+    /// Laravel scope methods are defined as `scopeActive(Builder $query)`
+    /// but invoked as `active()` (or `BlogAuthor::active()`).  This helper
+    /// converts `"active"` → `"scopeActive"` so that go-to-definition can
+    /// find the actual method declaration.
+    fn scope_method_name(member_name: &str) -> String {
+        let mut scope = String::with_capacity("scope".len() + member_name.len());
+        scope.push_str("scope");
+        let mut chars = member_name.chars();
+        if let Some(first) = chars.next() {
+            scope.extend(first.to_uppercase());
+            scope.extend(chars);
+        }
+        scope
+    }
+
+    /// Check if a method is available on the Eloquent Builder for a Model
+    /// subclass.
+    ///
+    /// Laravel's `Model::__callStatic()` forwards static calls to
+    /// `Builder`, but the real `Model` class has no `@mixin Builder`
+    /// annotation.  This function bridges that gap for go-to-definition
+    /// by loading the Builder and searching its inheritance chain
+    /// (including `@mixin Query\Builder` and traits like
+    /// `BuildsQueries`) for the requested method.
+    ///
+    /// Returns `Some((ClassInfo, fqn))` of the declaring class when the
+    /// method is found, or `None` if the class is not an Eloquent Model
+    /// subclass or the method does not exist on Builder.
+    /// Reload the raw (unmerged) `ClassInfo` for a candidate.
+    ///
+    /// Candidates returned by `resolve_target_classes` may be
+    /// fully-resolved classes with virtual/mixin members baked into
+    /// their `methods` list (this happens when `type_hint_to_classes`
+    /// calls `resolve_class_fully` to apply generic substitutions).
+    /// `find_declaring_class` needs the raw class so it can trace
+    /// member declarations through the real inheritance and mixin
+    /// chain instead of short-circuiting on a merged method.
+    ///
+    /// Returns `Some(raw)` when a reload succeeds, or `None` when the
+    /// class cannot be reloaded (e.g. synthetic/anonymous classes).
+    fn reload_raw_class(
+        candidate: &ClassInfo,
+        all_classes: &[ClassInfo],
+        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+    ) -> Option<ClassInfo> {
+        let fqn = match &candidate.file_namespace {
+            Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, candidate.name),
+            _ => candidate.name.clone(),
+        };
+        crate::completion::resolver::find_class_by_name(all_classes, &fqn)
+            .cloned()
+            .or_else(|| class_loader(&fqn))
+    }
+
+    fn find_builder_forwarded_method(
+        class: &ClassInfo,
+        member_name: &str,
+        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+    ) -> Option<(ClassInfo, String)> {
+        if !extends_eloquent_model(class, class_loader) {
+            return None;
+        }
+        let builder = class_loader(ELOQUENT_BUILDER_FQN)?;
+        let (declaring_class, fqn) =
+            Self::find_declaring_class(&builder, member_name, class_loader)?;
+        // When the declaring class is the Eloquent Builder itself,
+        // find_declaring_class returns the short name ("Builder").
+        // Replace it with the fully-qualified name so that
+        // find_class_file_content can disambiguate classes that share
+        // the same short name (e.g. Eloquent\Builder vs Demo\Builder).
+        if !fqn.contains('\\') && fqn == builder.name {
+            Some((declaring_class, ELOQUENT_BUILDER_FQN.to_string()))
+        } else {
+            Some((declaring_class, fqn))
+        }
+    }
+
     fn resolve_trait_alias(class: &ClassInfo, member_name: &str) -> (String, Option<String>) {
         for alias in &class.trait_aliases {
             if alias.alias.as_deref() == Some(member_name) {
@@ -617,9 +786,20 @@ impl Backend {
 
             // Try to find the declaring class within the mixin's own
             // hierarchy (itself, its traits, its parents).
-            if let Some(found) = Self::find_declaring_class(&mixin_class, member_name, class_loader)
+            if let Some((declaring_class, fqn)) =
+                Self::find_declaring_class(&mixin_class, member_name, class_loader)
             {
-                return Some(found);
+                // When find_declaring_class finds the member directly on
+                // the mixin class, it returns the short name (e.g.
+                // "Builder") because ClassInfo.name is always short.
+                // Replace it with the fully-qualified mixin_name so that
+                // find_class_file_content can disambiguate classes that
+                // share the same short name (e.g. Eloquent\Builder vs
+                // Query\Builder).
+                if !fqn.contains('\\') && fqn == mixin_class.name {
+                    return Some((declaring_class, mixin_name.clone()));
+                }
+                return Some((declaring_class, fqn));
             }
 
             // Recurse into mixins declared by this mixin class.
@@ -670,36 +850,48 @@ impl Backend {
             let map = self.ast_map.lock().ok()?;
             let nmap = self.namespace_map.lock().ok();
 
-            let matches_ns = |file_uri: &str| -> bool {
+            // Check whether a class with the right short name and
+            // namespace lives in this file.  Uses the per-class
+            // `file_namespace` field first (correct for multi-namespace
+            // files like example.php), falling back to the file-level
+            // `namespace_map` for single-namespace files.
+            let class_in_file = |file_uri: &str, classes: &[ClassInfo]| -> bool {
                 match expected_ns {
-                    None => true,
+                    None => classes.iter().any(|c| c.name == last_segment),
                     Some(exp) => {
+                        // Prefer per-class file_namespace (handles
+                        // multi-namespace files correctly).
+                        let found_via_class_ns = classes.iter().any(|c| {
+                            c.name == last_segment && c.file_namespace.as_deref() == Some(exp)
+                        });
+                        if found_via_class_ns {
+                            return true;
+                        }
+                        // Fall back to file-level namespace_map for
+                        // classes that don't have file_namespace set
+                        // (e.g. single-namespace files, stubs).
                         let file_ns = nmap
                             .as_ref()
                             .and_then(|nm| nm.get(file_uri))
                             .and_then(|opt| opt.as_deref());
-                        file_ns == Some(exp)
+                        file_ns == Some(exp) && classes.iter().any(|c| c.name == last_segment)
                     }
                 }
             };
 
             // Check the current file first (common case: $this->method).
             if let Some(classes) = map.get(current_uri) {
-                if classes.iter().any(|c| c.name == last_segment) && matches_ns(current_uri) {
+                if class_in_file(current_uri, classes) {
                     Some(current_uri.to_string())
                 } else {
                     // Search other files.
                     map.iter()
-                        .find(|(u, classes)| {
-                            classes.iter().any(|c| c.name == last_segment) && matches_ns(u)
-                        })
+                        .find(|(u, classes)| class_in_file(u, classes))
                         .map(|(u, _)| u.clone())
                 }
             } else {
                 map.iter()
-                    .find(|(u, classes)| {
-                        classes.iter().any(|c| c.name == last_segment) && matches_ns(u)
-                    })
+                    .find(|(u, classes)| class_in_file(u, classes))
                     .map(|(u, _)| u.clone())
             }
         }?;
@@ -729,12 +921,37 @@ impl Backend {
         member_name: &str,
         kind: MemberKind,
     ) -> Option<Position> {
+        Self::find_member_position_in_range(content, member_name, kind, None)
+    }
+
+    /// Find the position of a member declaration, optionally scoped to a
+    /// byte range within the file.  When `class_range` is `Some((start, end))`,
+    /// only lines whose starting byte offset falls within `[start, end)` are
+    /// considered.  This prevents jumping to the wrong class when multiple
+    /// classes in the same file declare a member with the same name (e.g.
+    /// `Demo\Builder::where` vs `Illuminate\Database\Eloquent\Builder::where`).
+    pub(crate) fn find_member_position_in_range(
+        content: &str,
+        member_name: &str,
+        kind: MemberKind,
+        class_range: Option<(usize, usize)>,
+    ) -> Option<Position> {
         let is_word_boundary = |c: u8| {
             let ch = c as char;
             !ch.is_alphanumeric() && ch != '_'
         };
 
+        let mut byte_offset: usize = 0;
         for (line_idx, line) in content.lines().enumerate() {
+            let line_len = line.len() + 1; // +1 for the newline
+            let in_range = match class_range {
+                Some((start, end)) => byte_offset >= start && byte_offset < end,
+                None => true,
+            };
+            if !in_range {
+                byte_offset += line_len;
+                continue;
+            }
             match kind {
                 MemberKind::Method => {
                     // Look for `function methodName` with word boundaries.
@@ -847,11 +1064,15 @@ impl Backend {
                     }
                 }
             }
+            byte_offset += line_len;
         }
 
         // Fallback: for properties, check if this is a magic property
         // declared via a `@property` tag in the class docblock.
         // Lines look like: ` * @property Type $propertyName`
+        // NOTE: docblock tags precede the class body, so they fall
+        // outside `[start_offset, end_offset)`.  Don't scope these
+        // fallback searches by class_range.
         if kind == MemberKind::Property {
             let var_pattern = format!("${}", member_name);
             for (line_idx, line) in content.lines().enumerate() {
@@ -880,6 +1101,8 @@ impl Backend {
         // Fallback: for methods, check if this is a magic method
         // declared via a `@method` tag in the class docblock.
         // Lines look like: ` * @method ReturnType methodName(params...)`
+        // NOTE: same as above — docblock tags are outside the class body
+        // range, so don't scope by class_range.
         if kind == MemberKind::Method {
             // The method name is followed by `(` in a @method tag.
             let method_pattern = member_name;

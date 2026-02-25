@@ -130,9 +130,13 @@ impl Backend {
                         used_traits,
                         trait_precedences,
                         trait_aliases,
+                        inline_use_generics,
                     ) = Self::extract_class_like_members(class.members.iter(), doc_ctx);
 
                     let doc_info = extract_class_docblock(class, doc_ctx);
+
+                    let mut use_generics = doc_info.use_generics;
+                    use_generics.extend(inline_use_generics);
 
                     let start_offset = class.left_brace.start.offset;
                     let end_offset = class.right_brace.end.offset;
@@ -156,11 +160,12 @@ impl Backend {
                         template_param_bounds: doc_info.template_param_bounds,
                         extends_generics: doc_info.extends_generics,
                         implements_generics: doc_info.implements_generics,
-                        use_generics: doc_info.use_generics,
+                        use_generics,
                         type_aliases: doc_info.type_aliases,
                         trait_precedences,
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
+                        file_namespace: None,
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -194,6 +199,7 @@ impl Backend {
                         used_traits,
                         trait_precedences,
                         trait_aliases,
+                        inline_use_generics,
                     ) = Self::extract_class_like_members(iface.members.iter(), doc_ctx);
 
                     let doc_info = extract_class_docblock(iface, doc_ctx);
@@ -220,11 +226,16 @@ impl Backend {
                         template_param_bounds: doc_info.template_param_bounds,
                         extends_generics: doc_info.extends_generics,
                         implements_generics: doc_info.implements_generics,
-                        use_generics: doc_info.use_generics,
+                        use_generics: {
+                            let mut ug = doc_info.use_generics;
+                            ug.extend(inline_use_generics);
+                            ug
+                        },
                         type_aliases: doc_info.type_aliases,
                         trait_precedences,
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
+                        file_namespace: None,
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -240,6 +251,7 @@ impl Backend {
                         used_traits,
                         trait_precedences,
                         trait_aliases,
+                        inline_use_generics,
                     ) = Self::extract_class_like_members(trait_def.members.iter(), doc_ctx);
 
                     let doc_info = extract_class_docblock(trait_def, doc_ctx);
@@ -266,11 +278,16 @@ impl Backend {
                         template_param_bounds: doc_info.template_param_bounds,
                         extends_generics: vec![],
                         implements_generics: vec![],
-                        use_generics: vec![],
+                        use_generics: {
+                            let mut ug: Vec<(String, Vec<String>)> = vec![];
+                            ug.extend(inline_use_generics);
+                            ug
+                        },
                         type_aliases: HashMap::new(),
                         trait_precedences,
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
+                        file_namespace: None,
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -283,7 +300,7 @@ impl Backend {
                 Statement::Enum(enum_def) => {
                     let enum_name = enum_def.name.value.to_string();
 
-                    let (methods, properties, constants, mut used_traits, _, _) =
+                    let (methods, properties, constants, mut used_traits, _, _, _) =
                         Self::extract_class_like_members(enum_def.members.iter(), doc_ctx);
 
                     // Enums implicitly implement UnitEnum or BackedEnum.
@@ -340,6 +357,7 @@ impl Backend {
                         trait_precedences: vec![],
                         trait_aliases: vec![],
                         class_docblock: doc_info.raw_docblock,
+                        file_namespace: None,
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -390,7 +408,7 @@ impl Backend {
             })
             .unwrap_or_default();
 
-        let (methods, properties, constants, used_traits, trait_precedences, trait_aliases) =
+        let (methods, properties, constants, used_traits, trait_precedences, trait_aliases, _) =
             Self::extract_class_like_members(anon.members.iter(), doc_ctx);
 
         let start_offset = anon.left_brace.start.offset;
@@ -421,6 +439,7 @@ impl Backend {
             trait_precedences,
             trait_aliases,
             class_docblock: None,
+            file_namespace: None,
         }
     }
 
@@ -840,6 +859,7 @@ impl Backend {
         let mut used_traits = Vec::new();
         let mut trait_precedences = Vec::new();
         let mut trait_aliases = Vec::new();
+        let mut inline_use_generics: Vec<(String, Vec<String>)> = Vec::new();
 
         for member in members {
             match member {
@@ -1038,6 +1058,26 @@ impl Backend {
                         used_traits.push(trait_name_ident.value().to_string());
                     }
 
+                    // Extract `@use` generics from the docblock on the
+                    // trait `use` statement itself.  In Laravel, the
+                    // Eloquent Builder declares:
+                    //
+                    //   /** @use BuildsQueries<TModel> */
+                    //   use BuildsQueries;
+                    //
+                    // This binds the trait's template parameter to the
+                    // class's own template parameter.
+                    if let Some(ctx) = doc_ctx
+                        && let Some(doc_text) = docblock::get_docblock_text_for_node(
+                            ctx.trivias,
+                            ctx.content,
+                            trait_use,
+                        )
+                    {
+                        let tags = docblock::extract_generics_tag(doc_text, "@use");
+                        inline_use_generics.extend(tags);
+                    }
+
                     // Parse trait adaptation block (`{ ... }`) if present.
                     // This handles `insteadof` (precedence) and `as` (alias)
                     // declarations for resolving trait method conflicts.
@@ -1103,6 +1143,7 @@ impl Backend {
             used_traits,
             trait_precedences,
             trait_aliases,
+            inline_use_generics,
         )
     }
 }

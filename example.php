@@ -12,7 +12,7 @@
  *   3. SCAFFOLDING  — supporting definitions (scroll past these)
  */
 
-namespace Demo;
+namespace Demo {
 
 use Exception;
 use Stringable;
@@ -821,6 +821,12 @@ class SwitchDemo
 // Methods starting with "scope" (e.g. scopeActive) produce virtual methods with
 // the prefix stripped and first letter lowercased (e.g. active). The $query
 // parameter is removed. Scopes are available as both static and instance methods.
+//
+// Eloquent Builder methods are forwarded as static methods on model classes.
+// User::where('active', true)->orderBy('name')->get() resolves end-to-end.
+// Return types are mapped: Builder chain methods return Builder<ConcreteModel>,
+// and TModel parameters resolve to the concrete model class. Methods from
+// Query\Builder (via @mixin) are included as well.
 
 class BlogAuthor extends \Illuminate\Database\Eloquent\Model
 {
@@ -869,6 +875,14 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         // Scope methods — static access
         BlogAuthor::active();             // also available as static
         BlogAuthor::ofGenre('fiction');    // $genre parameter preserved, $query stripped
+
+        // Builder-as-static forwarding
+        BlogAuthor::where('active', true);         // returns Builder<BlogAuthor>
+        BlogAuthor::where('active', 1)->get();     // returns Collection<BlogAuthor>
+        BlogAuthor::where('active', 1)->first();   // returns BlogAuthor|null
+        BlogAuthor::orderBy('name')->limit(10)->get(); // full chain resolution
+        // Query\Builder methods (@mixin) are also forwarded:
+        BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get();
     }
 }
 
@@ -2584,4 +2598,101 @@ class BlogTag extends \Illuminate\Database\Eloquent\Model
     public function getLabel(): string { return ''; }
 }
 
+} // end namespace Demo
 
+// ── Illuminate Stubs ────────────────────────────────────────────────────────
+// Minimal stubs matching real Laravel classes so that the Eloquent demo models
+// above resolve Builder methods, relationship properties, and scope forwarding
+// without requiring a real Laravel installation.
+
+namespace Illuminate\Database\Eloquent {
+
+    abstract class Model {
+        /** @return \Illuminate\Database\Eloquent\Builder<static> */
+        public static function query() {}
+    }
+
+    /**
+     * @template TModel of \Illuminate\Database\Eloquent\Model
+     *
+     * @mixin \Illuminate\Database\Query\Builder
+     */
+    class Builder implements \Illuminate\Contracts\Database\Eloquent\Builder {
+        /** @use \Illuminate\Database\Concerns\BuildsQueries<TModel> */
+        use \Illuminate\Database\Concerns\BuildsQueries;
+
+        /**
+         * @param  (\Closure(static): mixed)|string|array  $column
+         * @return $this
+         */
+        public function where($column, $operator = null, $value = null, $boolean = 'and') {}
+
+        /** @return \Illuminate\Database\Eloquent\Collection<int, TModel> */
+        public function get($columns = ['*']) { return new Collection(); }
+    }
+
+    /**
+     * @template TKey of array-key
+     * @template TModel of \Illuminate\Database\Eloquent\Model
+     */
+    class Collection {
+        /** @return TModel|null */
+        public function first(): mixed { return null; }
+        public function count(): int { return 0; }
+    }
+}
+
+namespace Illuminate\Database\Eloquent\Relations {
+    class HasMany {}
+    class HasOne {}
+    class BelongsTo {}
+    class BelongsToMany {}
+    class MorphOne {}
+    class MorphMany {}
+    class MorphTo {}
+    class MorphToMany {}
+    class HasManyThrough {}
+}
+
+namespace Illuminate\Database\Concerns {
+
+    /**
+     * @template TValue
+     */
+    trait BuildsQueries {
+        /** @return TValue|null */
+        public function first($columns = ['*']) { return null; }
+    }
+}
+
+namespace Illuminate\Database\Query {
+
+    class Builder {
+        /**
+         * @param  string  $column
+         * @return $this
+         */
+        public function whereIn($column, $values, $boolean = 'and', $not = false) { return $this; }
+
+        /** @return $this */
+        public function groupBy(...$groups) { return $this; }
+
+        /** @return $this */
+        public function orderBy($column, $direction = 'asc') { return $this; }
+
+        /** @return $this */
+        public function limit($value) { return $this; }
+
+        /**
+         * @return \Illuminate\Support\Collection<int, \stdClass>
+         */
+        public function get($columns = ['*']) {}
+    }
+}
+
+namespace Illuminate\Contracts\Database\Eloquent {
+    /**
+     * @mixin \Illuminate\Database\Eloquent\Builder
+     */
+    interface Builder {}
+}

@@ -12,6 +12,13 @@ use std::collections::HashMap;
 ///
 /// Contains `(methods, properties, constants, used_traits, trait_precedences, trait_aliases)`
 /// extracted from the members of a class-like declaration.
+/// Extracted class-like members from a class body.
+///
+/// Fields: methods, properties, constants, used_traits, trait_precedences,
+/// trait_aliases, inline_use_generics.
+///
+/// The last element holds `@use` generics extracted from docblocks on trait
+/// `use` statements inside the class body (e.g. `/** @use BuildsQueries<TModel> */`).
 pub type ExtractedMembers = (
     Vec<MethodInfo>,
     Vec<PropertyInfo>,
@@ -19,6 +26,7 @@ pub type ExtractedMembers = (
     Vec<String>,
     Vec<TraitPrecedence>,
     Vec<TraitAlias>,
+    Vec<(String, Vec<String>)>,
 );
 
 // ─── Array Shape Types ──────────────────────────────────────────────────────
@@ -501,6 +509,17 @@ pub struct ClassInfo {
     /// are still parsed eagerly because they affect class metadata that is
     /// needed during indexing and inheritance resolution.
     pub class_docblock: Option<String>,
+    /// The namespace this class was declared in.
+    ///
+    /// Populated during parsing from the enclosing `namespace { }` block.
+    /// For files with a single namespace (the common PSR-4 case) this
+    /// matches the file-level namespace.  For files with multiple
+    /// namespace blocks (e.g. `example.php` with inline stubs) each class
+    /// carries its own namespace so that `find_class_in_ast_map` can
+    /// distinguish two classes with the same short name in different
+    /// namespace blocks (e.g. `Illuminate\Database\Eloquent\Builder` vs
+    /// `Illuminate\Database\Query\Builder`).
+    pub file_namespace: Option<String>,
 }
 
 // ─── ClassInfo helpers ──────────────────────────────────────────────────────

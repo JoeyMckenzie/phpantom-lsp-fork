@@ -1912,14 +1912,14 @@ async fn test_completion_mixin_variable_from_chained_method_call() {
 // ─── @return $this on mixin methods ─────────────────────────────────────────
 
 /// Test: When a mixin class has a method with `@return $this`, chaining on
-/// that method should resolve to the **mixin class** (not the consumer).
+/// that method should resolve to the **consumer class** so that fluent
+/// chains offer the consumer's full API (own methods + all mixin methods).
 ///
-/// In PHP, `@mixin` proxies calls via `__call` to an internal instance of
-/// the mixin class, so `$this` inside the mixin method refers to the mixin
-/// instance.  This contrasts with inheritance where `@return $this` /
-/// `static` resolves to the child class.
+/// This matches real-world usage: `$model->where('active')->save()` should
+/// work because `save()` is on Model even though `where()` came from the
+/// mixin.
 #[tokio::test]
-async fn test_completion_mixin_return_this_resolves_to_mixin_class() {
+async fn test_completion_mixin_return_this_resolves_to_consumer_class() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///mixin_return_this.php").unwrap();
@@ -1978,8 +1978,8 @@ async fn test_completion_mixin_return_this_resolves_to_mixin_class() {
                 .map(|i| i.filter_text.as_deref().unwrap())
                 .collect();
 
-            // `@return $this` on a mixin method resolves to QueryBuilder,
-            // so we should see QueryBuilder's methods, NOT Model's.
+            // `@return $this` on a mixin method resolves to the consumer
+            // (Model), so we see both Model's own methods and mixin methods.
             assert!(
                 method_names.contains(&"get"),
                 "Chaining after mixin @return $this should show mixin class methods (get), got: {:?}",
@@ -1995,11 +1995,11 @@ async fn test_completion_mixin_return_this_resolves_to_mixin_class() {
                 "Chaining after mixin @return $this should show mixin class methods (where), got: {:?}",
                 method_names
             );
-            // Model's own method should NOT appear — the chain resolved
-            // to QueryBuilder, not Model.
+            // Model's own method should also appear — $this resolves to
+            // the consumer, which has both own and mixin methods.
             assert!(
-                !method_names.contains(&"save"),
-                "Chaining after mixin @return $this should NOT show consumer class methods (save), got: {:?}",
+                method_names.contains(&"save"),
+                "Chaining after mixin @return $this should also show consumer class methods (save), got: {:?}",
                 method_names
             );
         }
@@ -2392,13 +2392,13 @@ async fn test_goto_definition_inherited_mixin_static_method() {
 // ─── Mixin return type: self / static should resolve to mixin class ────────
 
 /// When a mixin method has `@return static` (or native return type `self`),
-/// chaining on that method should resolve to the **mixin class**, not the
-/// consuming class.
+/// chaining on that method should resolve to the **consumer class** so that
+/// fluent chains offer the consumer's full API (own + mixin methods).
 ///
-/// This is the same principle as `$this` — `@mixin` proxies calls via
-/// `__call` / `__callStatic`, so self/static refer to the mixin instance.
+/// This matches `$this` behavior: mixin methods that return self-types
+/// continue chaining on the consumer, not the mixin.
 #[tokio::test]
-async fn test_completion_mixin_return_static_resolves_to_mixin_class() {
+async fn test_completion_mixin_return_static_resolves_to_consumer_class() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///mixin_return_static.php").unwrap();
@@ -2462,8 +2462,8 @@ async fn test_completion_mixin_return_static_resolves_to_mixin_class() {
                 .map(|i| i.filter_text.as_deref().unwrap())
                 .collect();
 
-            // `@return static` / native `self` on a mixin method should
-            // resolve to Builder, so we see Builder's methods.
+            // `@return static` on a mixin method resolves to the consumer
+            // (User), so we see both consumer and mixin methods.
             assert!(
                 method_names.contains(&"where"),
                 "Chaining after mixin @return static should show Builder methods (where), got: {:?}",
@@ -2474,16 +2474,16 @@ async fn test_completion_mixin_return_static_resolves_to_mixin_class() {
                 "Chaining after mixin @return static should show Builder methods (get), got: {:?}",
                 method_names
             );
-            // Consumer class methods should NOT appear — the chain resolved
-            // to Builder, not User or Model.
+            // Consumer class methods should also appear — static resolves
+            // to the consumer which has both own and mixin methods.
             assert!(
-                !method_names.contains(&"save"),
-                "Should NOT show Model methods (save) after mixin static return, got: {:?}",
+                method_names.contains(&"save"),
+                "Should show Model methods (save) after mixin static return, got: {:?}",
                 method_names
             );
             assert!(
-                !method_names.contains(&"getEmail"),
-                "Should NOT show User methods (getEmail) after mixin static return, got: {:?}",
+                method_names.contains(&"getEmail"),
+                "Should show User methods (getEmail) after mixin static return, got: {:?}",
                 method_names
             );
         }
@@ -2493,7 +2493,7 @@ async fn test_completion_mixin_return_static_resolves_to_mixin_class() {
 
 /// Same as above but with native `self` return type and no docblock override.
 #[tokio::test]
-async fn test_completion_mixin_return_self_resolves_to_mixin_class() {
+async fn test_completion_mixin_return_self_resolves_to_consumer_class() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///mixin_return_self.php").unwrap();
@@ -2560,9 +2560,11 @@ async fn test_completion_mixin_return_self_resolves_to_mixin_class() {
                 "Chaining after mixin self return should show QueryBuilder methods (toSql), got: {:?}",
                 method_names
             );
+            // Consumer class methods should also appear — self resolves
+            // to the consumer which has both own and mixin methods.
             assert!(
-                !method_names.contains(&"save"),
-                "Should NOT show Model methods (save) after mixin self return, got: {:?}",
+                method_names.contains(&"save"),
+                "Should show Model methods (save) after mixin self return, got: {:?}",
                 method_names
             );
         }

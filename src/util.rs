@@ -308,15 +308,22 @@ impl Backend {
         };
 
         let map = self.ast_map.lock().ok()?;
-        let nmap = self.namespace_map.lock().ok();
-        for (uri, classes) in map.iter() {
-            if let Some(cls) = classes.iter().find(|c| c.name == last_segment) {
+
+        for (_uri, classes) in map.iter() {
+            // Iterate ALL classes with the matching short name, not just
+            // the first.  A multi-namespace file can contain two classes
+            // with the same short name in different namespace blocks
+            // (e.g. `Illuminate\Database\Eloquent\Builder` and
+            // `Illuminate\Database\Query\Builder`).
+            for cls in classes.iter().filter(|c| c.name == last_segment) {
                 if let Some(exp_ns) = expected_ns {
-                    let file_ns = nmap
-                        .as_ref()
-                        .and_then(|nm| nm.get(uri))
-                        .and_then(|opt| opt.as_deref());
-                    if file_ns != Some(exp_ns) {
+                    // Use the per-class namespace (set during parsing)
+                    // rather than the file-level namespace.  This
+                    // correctly handles files with multiple namespace
+                    // blocks where different classes live under different
+                    // namespaces.
+                    let class_ns = cls.file_namespace.as_deref();
+                    if class_ns != Some(exp_ns) {
                         continue;
                     }
                 }

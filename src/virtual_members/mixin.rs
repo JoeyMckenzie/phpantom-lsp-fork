@@ -176,17 +176,16 @@ fn collect_mixin_members(
             if methods.iter().any(|m| m.name == method.name) {
                 continue;
             }
-            let mut method = method.clone();
-            // `@return $this` in the mixin class refers to the mixin
-            // instance, NOT the consuming class.  Rewrite the return
-            // type to the concrete mixin class name so that resolution
-            // produces the mixin class rather than the consumer.
-            if matches!(
-                method.return_type.as_deref(),
-                Some("$this" | "self" | "static")
-            ) {
-                method.return_type = Some(mixin_class.name.clone());
-            }
+            let method = method.clone();
+            // `@return $this` / `self` / `static` in mixin methods are
+            // left as-is.  When the method is later called on the
+            // consuming class, `$this` resolves to the consumer (not the
+            // mixin), which is the correct semantic: fluent chains
+            // continue with the consumer's full API (own methods + all
+            // mixin methods).  In the builder-as-static forwarding path,
+            // the substitution map rewrites `$this` to
+            // `\Illuminate\Database\Eloquent\Builder<Model>`, so the
+            // return type must still be the raw keyword at this stage.
             methods.push(method);
         }
 
@@ -263,6 +262,7 @@ mod tests {
             trait_precedences: Vec::new(),
             trait_aliases: Vec::new(),
             class_docblock: None,
+            file_namespace: None,
         }
     }
 
@@ -442,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrites_this_return_type_to_mixin_class() {
+    fn leaves_this_return_type_as_is_for_consumer_resolution() {
         let provider = MixinProvider;
         let mut class = make_class("Foo");
         class.mixins = vec!["Bar".to_string()];
@@ -462,12 +462,20 @@ mod tests {
 
         let result = provider.provide(&class, &class_loader);
         assert_eq!(result.methods.len(), 3);
-        for method in &result.methods {
+        // Return types are left as-is so that $this/self/static resolve
+        // to the consuming class when the method is called on it.
+        let expected = [
+            ("fluent", "$this"),
+            ("selfRef", "self"),
+            ("staticRef", "static"),
+        ];
+        for (name, expected_ret) in &expected {
+            let method = result.methods.iter().find(|m| m.name == *name).unwrap();
             assert_eq!(
                 method.return_type.as_deref(),
-                Some("Bar"),
-                "method '{}' should have return type rewritten to mixin class name",
-                method.name
+                Some(*expected_ret),
+                "method '{}' should keep its original return type for consumer resolution",
+                name
             );
         }
     }
