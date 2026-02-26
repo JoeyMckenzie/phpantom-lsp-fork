@@ -98,10 +98,27 @@ impl Backend {
         // this check, the backwards scan below would find an *earlier*
         // definition of the same variable (e.g. in a previous foreach
         // loop) and jump there incorrectly.
+        //
+        // However, the same variable can appear multiple times on one
+        // line (e.g. `$value = $value->value`).  Only treat this as
+        // "already at definition" when the cursor is actually on the
+        // defining occurrence (the LHS), not on a RHS usage.  When the
+        // cursor is on a RHS occurrence, fall through to the backward
+        // scan so it finds the original definition (e.g. a parameter).
         if cursor_line < lines.len()
-            && Self::line_defines_variable(lines[cursor_line], var_name).is_some()
+            && let Some(def_col) = Self::line_defines_variable(lines[cursor_line], var_name)
         {
-            return None;
+            let cursor_col = position.character as usize;
+            // The defining occurrence spans [def_col .. def_col + len).
+            // If the cursor falls within that span, the user is on the
+            // LHS definition — return None so the caller can try
+            // type-hint resolution.  Otherwise the cursor is on a
+            // different occurrence of the same variable on the RHS;
+            // let the backward scan below find the original definition.
+            let def_end = def_col + var_name.len();
+            if cursor_col >= def_col && cursor_col < def_end {
+                return None;
+            }
         }
 
         let search_end = cursor_line;

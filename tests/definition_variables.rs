@@ -1925,3 +1925,120 @@ async fn test_goto_definition_foreach_reassignment_inside_loop() {
         other => panic!("Expected Scalar location, got: {:?}", other),
     }
 }
+
+// ─── RHS variable on same line as LHS assignment ────────────────────────────
+
+/// When `$value` appears on both sides of an assignment (`$value = $value->value`),
+/// go-to-definition on the RHS `$value` should jump to the parameter declaration,
+/// not silently return nothing because the line also contains a definition.
+#[tokio::test]
+async fn test_goto_definition_rhs_variable_same_line_as_assignment() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///rhs_same_line.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                 // 0
+        "class Converter {\n",                                     // 1
+        "    public static function toInt(mixed $value): int {\n", // 2
+        "        if ($value instanceof BackedEnum) {\n",           // 3
+        "            $value = $value->value;\n",                   // 4
+        "        }\n",                                             // 5
+        "        return (int) $value;\n",                          // 6
+        "    }\n",                                                 // 7
+        "}\n",                                                     // 8
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Cursor on the RHS `$value` in `$value = $value->value;` (line 4).
+    // The LHS `$value` starts at column 12, so the RHS `$value` starts at column 21.
+    // Clicking on the RHS should jump to the parameter on line 2.
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 4,
+                character: 22, // inside the RHS `$value`
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "RHS $value should resolve to the parameter declaration"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            assert_eq!(location.uri, uri);
+            assert_eq!(
+                location.range.start.line, 2,
+                "RHS $value should jump to the parameter on line 2"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+/// When the cursor is on the LHS `$value` of `$value = $value->value`,
+/// go-to-definition should still return None (already at a definition site)
+/// so that type-hint resolution can be attempted.
+#[tokio::test]
+async fn test_goto_definition_lhs_variable_same_line_still_returns_none() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///lhs_same_line.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                 // 0
+        "class Converter {\n",                                     // 1
+        "    public static function toInt(mixed $value): int {\n", // 2
+        "        if ($value instanceof BackedEnum) {\n",           // 3
+        "            $value = $value->value;\n",                   // 4
+        "        }\n",                                             // 5
+        "    }\n",                                                 // 6
+        "}\n",                                                     // 7
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Cursor on the LHS `$value` in `$value = $value->value;` (line 4, col 13).
+    // This is the definition site itself — go-to-definition should return None
+    // (no further definition to jump to, since `mixed` is a scalar type).
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 4,
+                character: 13, // inside the LHS `$value`
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    // `mixed` is a scalar type, so type-hint resolution also returns None.
+    assert!(
+        result.is_none(),
+        "LHS $value is a definition site with scalar type — should return None"
+    );
+}
