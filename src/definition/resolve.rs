@@ -727,9 +727,7 @@ impl Backend {
     /// `SymbolMap` lookup.  This helper is retained for non-cursor-context
     /// uses (e.g. go-to-implementation) and as a fallback when no symbol
     /// map exists for the file.
-    #[deprecated(
-        note = "prefer SymbolMap lookup; kept as fallback and for non-cursor uses"
-    )]
+    #[deprecated(note = "prefer SymbolMap lookup; kept as fallback and for non-cursor uses")]
     pub fn extract_word_at_position(content: &str, position: Position) -> Option<String> {
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = position.line as usize;
