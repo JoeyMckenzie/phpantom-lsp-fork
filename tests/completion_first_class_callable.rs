@@ -655,3 +655,210 @@ async fn test_first_class_callable_static_method_returning_static() {
         names,
     );
 }
+
+// ─── Closure / arrow-function literals resolve to Closure ───────────────────
+
+#[tokio::test]
+async fn test_closure_literal_resolves_to_closure() {
+    // A closure literal `function() { … }` assigned to a variable should
+    // resolve to the Closure class, offering members like bindTo and call.
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/closure_literal_members.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Closure {\n",
+        "    public function bindTo(?object $newThis): ?Closure { return $this; }\n",
+        "    public static function bind(Closure $closure, ?object $newThis): ?Closure { return $closure; }\n",
+        "    public function call(object $newThis, mixed ...$args): mixed { return null; }\n",
+        "}\n",
+        "class User { public function getName(): string { return ''; } }\n",
+        "class Service {\n",
+        "    public function run(): void {\n",
+        "        $typedClosure = function(User $u): string { return $u->getName(); };\n",
+        "        $typedClosure->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 10: `        $typedClosure->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 10, 24).await;
+    let names = method_names(&items);
+    assert!(names.contains(&"bindTo"), "Expected bindTo in {:?}", names,);
+    assert!(names.contains(&"call"), "Expected call in {:?}", names);
+}
+
+#[tokio::test]
+async fn test_arrow_function_resolves_to_closure() {
+    // An arrow function `fn() => …` assigned to a variable should also
+    // resolve to the Closure class.
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/arrow_fn_members.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Closure {\n",
+        "    public function bindTo(?object $newThis): ?Closure { return $this; }\n",
+        "    public static function bind(Closure $closure, ?object $newThis): ?Closure { return $closure; }\n",
+        "    public function call(object $newThis, mixed ...$args): mixed { return null; }\n",
+        "}\n",
+        "class Service {\n",
+        "    public function run(): void {\n",
+        "        $typedArrow = fn(int $x): float => $x * 1.5;\n",
+        "        $typedArrow->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 9: `        $typedArrow->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 9, 22).await;
+    let names = method_names(&items);
+    assert!(names.contains(&"bindTo"), "Expected bindTo in {:?}", names,);
+    assert!(names.contains(&"call"), "Expected call in {:?}", names);
+}
+
+#[tokio::test]
+async fn test_closure_literal_bindto_chain() {
+    // `$fn->bindTo($obj)` returns ?Closure, so chaining should continue
+    // on the Closure class.
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/closure_bindto_chain.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Closure {\n",
+        "    public function bindTo(?object $newThis): ?Closure { return $this; }\n",
+        "    public function call(object $newThis, mixed ...$args): mixed { return null; }\n",
+        "}\n",
+        "class Service {\n",
+        "    public function run(): void {\n",
+        "        $fn = function(): void {};\n",
+        "        $bound = $fn->bindTo($this);\n",
+        "        $bound->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 9: `        $bound->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 9, 16).await;
+    let names = method_names(&items);
+    assert!(
+        names.contains(&"bindTo"),
+        "Expected bindTo on chained result in {:?}",
+        names,
+    );
+    assert!(
+        names.contains(&"call"),
+        "Expected call on chained result in {:?}",
+        names,
+    );
+}
+
+#[tokio::test]
+async fn test_closure_no_params_resolves_to_closure() {
+    // Even a bare closure with no params / no return type should resolve
+    // to the Closure class.
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/closure_bare.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Closure {\n",
+        "    public function bindTo(?object $newThis): ?Closure { return $this; }\n",
+        "    public function call(object $newThis, mixed ...$args): mixed { return null; }\n",
+        "}\n",
+        "class Service {\n",
+        "    public function run(): void {\n",
+        "        $bare = function() {};\n",
+        "        $bare->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 8: `        $bare->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 8, 15).await;
+    let names = method_names(&items);
+    assert!(names.contains(&"bindTo"), "Expected bindTo in {:?}", names,);
+    assert!(names.contains(&"call"), "Expected call in {:?}", names);
+}
+
+#[tokio::test]
+async fn test_closure_with_use_resolves_to_closure() {
+    // A closure with a `use ($x)` clause should still resolve to Closure.
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/closure_use_clause.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Closure {\n",
+        "    public function bindTo(?object $newThis): ?Closure { return $this; }\n",
+        "    public function call(object $newThis, mixed ...$args): mixed { return null; }\n",
+        "}\n",
+        "class Service {\n",
+        "    public function run(): void {\n",
+        "        $x = 42;\n",
+        "        $fn = function() use ($x): int { return $x; };\n",
+        "        $fn->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 9: `        $fn->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 9, 13).await;
+    let names = method_names(&items);
+    assert!(names.contains(&"bindTo"), "Expected bindTo in {:?}", names,);
+}
+
+#[tokio::test]
+async fn test_arrow_function_no_return_type_resolves_to_closure() {
+    // Arrow function without an explicit return type still resolves to Closure.
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/arrow_no_return.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Closure {\n",
+        "    public function bindTo(?object $newThis): ?Closure { return $this; }\n",
+        "    public function call(object $newThis, mixed ...$args): mixed { return null; }\n",
+        "}\n",
+        "class Service {\n",
+        "    public function run(): void {\n",
+        "        $arrow = fn($x) => $x * 2;\n",
+        "        $arrow->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 8: `        $arrow->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 8, 16).await;
+    let names = method_names(&items);
+    assert!(names.contains(&"bindTo"), "Expected bindTo in {:?}", names,);
+    assert!(names.contains(&"call"), "Expected call in {:?}", names);
+}
+
+#[tokio::test]
+async fn test_closure_top_level_resolves_to_closure() {
+    // Closure literal at the top level (outside any class) should also
+    // resolve to the Closure class.
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/closure_top_level.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Closure {\n",
+        "    public function bindTo(?object $newThis): ?Closure { return $this; }\n",
+        "    public function call(object $newThis, mixed ...$args): mixed { return null; }\n",
+        "}\n",
+        "$greet = function(string $name): string { return \"Hello $name\"; };\n",
+        "$greet->\n",
+    );
+
+    // Line 6: `$greet->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 6, 8).await;
+    let names = method_names(&items);
+    assert!(
+        names.contains(&"bindTo"),
+        "Expected bindTo at top level in {:?}",
+        names,
+    );
+}

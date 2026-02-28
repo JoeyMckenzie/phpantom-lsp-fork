@@ -776,9 +776,12 @@ See `NonEmptyStringFunctionsReturnTypeExtension` in PHPStan.
 ### 25. `Closure::bind()` / `Closure::fromCallable()` return type preservation
 **Impact: Low · Effort: Low-Medium**
 
-PHPStan preserves the closure's type through `Closure::bind()` and
-resolves `Closure::fromCallable('functionName')` to the actual
-function's signature as a `Closure` type.  This is relevant for DI
+Variables holding closure literals, arrow functions, and first-class
+callables now resolve to the `Closure` class, so `$fn->bindTo()`,
+`$fn->call()`, etc. offer completions.  The remaining gap is
+*preserving the closure's callable signature* through `Closure::bind()`
+and resolving `Closure::fromCallable('functionName')` to the actual
+function's signature as a typed `Closure`.  This is relevant for DI
 containers and middleware patterns but is a niche use case.
 
 See `ClosureBindDynamicReturnTypeExtension` and

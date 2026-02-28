@@ -1914,44 +1914,58 @@ async fn test_array_shape_nested_literal_inside_method() {
     }
 }
 
-/// Load the actual example.php file and trigger completion at the nested
-/// literal array access. This catches issues that smaller synthetic tests
-/// miss (e.g. other `$config` assignments earlier in the file that `rfind`
-/// might match instead of the local one).
+/// Test nested literal array key completion in a file that has multiple
+/// `$config` assignments across different classes. This catches issues where
+/// `rfind` might match a `$config` from an earlier class instead of the
+/// local one in the current method scope.
 #[tokio::test]
-async fn test_array_shape_nested_literal_real_example_php() {
+async fn test_array_shape_nested_literal_multiple_config_assignments() {
     let backend = create_test_backend();
 
-    let uri = Url::parse("file:///example.php").unwrap();
-    let original = include_str!("../example.php");
-
-    // Find the line with `$config['db']['host']` and replace 'host' with
-    // empty quotes to simulate the user deleting it.
-    let target_line = "$config['db']['host'];";
-    let replacement = "$config['db'][''];";
-    assert!(
-        original.contains(target_line),
-        "example.php must contain the target line"
+    let uri = Url::parse("file:///multi_config.php").unwrap();
+    // Multiple classes with different $config assignments — the resolver
+    // must pick the local one in SecondClass::demo(), not the one from
+    // FirstClass::demo() or the parameter in SecondClass::fromParam().
+    let text = concat!(
+        "<?php\n",
+        "namespace App;\n",
+        "\n",
+        "class FirstClass {\n",
+        "    public function demo(): void {\n",
+        "        $config = ['host' => 'localhost', 'port' => 3306];\n",
+        "        $config[''];\n",
+        "    }\n",
+        "}\n",
+        "\n",
+        "class SecondClass {\n",
+        "    /** @param array{host: string, port: int} $config */\n",
+        "    public function fromParam(array $config): void {\n",
+        "        $config['host'];\n",
+        "    }\n",
+        "\n",
+        "    public function demo(): void {\n",
+        "        $config = ['db' => ['host' => 'localhost', 'port' => 3306], 'debug' => true];\n",
+        "        $config['db']['']\n",
+        "    }\n",
+        "}\n",
     );
-    let text = original.replace(target_line, replacement);
 
     let open_params = DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
             uri: uri.clone(),
             language_id: "php".to_string(),
             version: 1,
-            text: text.clone(),
+            text: text.to_string(),
         },
     };
     backend.did_open(open_params).await;
 
-    // Find the cursor position: line number and column between the quotes.
+    // Cursor between the two quotes on the $config['db'][''] line (line 18, 0-indexed).
     let cursor_line = text
         .lines()
-        .position(|l| l.contains(replacement))
-        .expect("replacement line must exist");
+        .position(|l| l.contains("$config['db']['']"))
+        .expect("must find the nested access line");
     let line_text = text.lines().nth(cursor_line).unwrap();
-    // Cursor goes between the two quotes in ['']
     let col = line_text.find("['']").expect("must find ['']") + 2; // after [' before ']
 
     let completion_params = CompletionParams {
@@ -1970,7 +1984,7 @@ async fn test_array_shape_nested_literal_real_example_php() {
     let result = backend.completion(completion_params).await.unwrap();
     assert!(
         result.is_some(),
-        "Should return nested key completions in real example.php (line={}, col={})",
+        "Should return nested key completions (line={}, col={})",
         cursor_line,
         col
     );
@@ -1984,12 +1998,12 @@ async fn test_array_shape_nested_literal_real_example_php() {
                 .collect();
             assert!(
                 labels.contains(&"host"),
-                "Should suggest 'host' from nested literal in example.php, got {:?}",
+                "Should suggest 'host' from nested literal, got {:?}",
                 labels
             );
             assert!(
                 labels.contains(&"port"),
-                "Should suggest 'port' from nested literal in example.php, got {:?}",
+                "Should suggest 'port' from nested literal, got {:?}",
                 labels
             );
             assert!(
@@ -2007,7 +2021,7 @@ async fn test_array_shape_nested_literal_real_example_php() {
     }
 }
 
-/// Reproduce the exact example.php nestedLiteral() method: the user has the
+/// Reproduce a nestedLiteral() method scenario: the user has the
 /// complete method body, places their cursor on the `$config['db']['host']`
 /// line, deletes `host`, and triggers completion between the empty quotes.
 /// This is the closest simulation of the real editor scenario.
@@ -2016,8 +2030,8 @@ async fn test_array_shape_nested_literal_example_php_scenario() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///nested_example_php.php").unwrap();
-    // Mirrors the ShapeDemo::nestedLiteral() method from example.php,
-    // but with the user having deleted 'host' from the second line.
+    // A method body with a nested literal array shape where the user has
+    // deleted 'host' from the second line to trigger completion.
     let text = concat!(
         "<?php\n",
         "namespace Demo;\n",

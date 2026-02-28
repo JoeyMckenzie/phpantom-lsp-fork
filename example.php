@@ -7,9 +7,11 @@
  * Trigger completion after -> / :: / $, or Ctrl+Click for go-to-definition.
  *
  * Layout:
- *   1. PLAYGROUND  — try completion and go-to-definition here
- *   2. DEMO CLASSES — features that require class / method context
- *   3. SCAFFOLDING  — supporting definitions (scroll past these)
+ *   1. DEMOS       — open any demo() method and try completion inside it
+ *   2. SCAFFOLDING — supporting definitions (scroll past these)
+ *
+ * Priority:
+ *   Basic everyday features → Laravel → Trivial (works everywhere) → Advanced
  */
 
 namespace Demo {
@@ -18,772 +20,599 @@ use Exception;
 use Stringable;
 use Demo\UserProfile as Profile;
 
+
 // ═══════════════════════════════════════════════════════════════════════════
-//  PLAYGROUND — try completion and go-to-definition here
+//  DEMOS — open any demo() method and trigger completion inside
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── Alphabetical Auto-Import ────────────────────────────────────────────────
-// Try: type `new DateT` and accept `DateTime`. The `use DateTime;` statement
-// will be inserted between `use Exception;` and `use Stringable;` to maintain
-// alphabetical order.
-
-// ── Use-Import Conflict Resolution ──────────────────────────────────────────
-// The `use Exception;` import above occupies the short name "Exception".
-// Try: type `throw new pq\Exception();` below and accept the auto-import for
-// pq\Exception. The auto-import should insert `\pq\Exception` at the usage site
-// instead of adding `use pq\Exception;` (which would conflict).
-
-// ── Namespace Segment Completion ────────────────────────────────────────────
-// When typing a namespace-qualified reference (in use statements, type hints,
-// new expressions, or anywhere with a backslash), completion shows the
-// next-level namespace segments as navigable items alongside matching classes.
-// This lets you drill into deep namespace trees incrementally.
-//
-// Try: erase the class name after `use Demo\` or `new \Demo\` and trigger
-// completion to see namespace segments (marked with a module/folder icon)
-// appear above class names in the list.
-
-// ── Namespaced Function Completion ──────────────────────────────────────────
-// Namespaced functions are completed with their fully-qualified name in
-// `use function` statements, and with auto-import in inline code.
-//
-// Try: type `use function parse_file` and accept to get `use function ast\parse_file;`
-// Functions in different namespaces with the same short name appear as
-// separate items, each showing their namespace in the detail.
 
 // ── Instance Completion ─────────────────────────────────────────────────────
 
-$user = new User('Alice', 'alice@example.com');
-$user->getEmail();           // own method
-$user->email;                // own property
-$user->age;                  // constructor-promoted property
-$user->uuid;                 // readonly promoted (from Model)
-$user->getCreatedAt();       // trait method (HasTimestamps)
-$user->generateSlug('Hi');   // trait method (HasSlug)
-$user->getName();            // inherited from Model
-$user->displayName;          // @property magic
-$user->hasPermission('x');   // @method magic
-$user->output;               // @property-read (Renderable interface)
-$user->render();             // @method (Renderable interface)
-
-
-// ── @var Docblock Override ──────────────────────────────────────────────────
-// The variable name in @var is optional. Both forms work for completion and go-to-definition.
-// When the @var includes a variable name (e.g. `/** @var AdminUser $inlineHinted */`),
-// that name also appears in $-triggered variable name suggestions.
-
-/** @var AdminUser $inlineHinted */
-$inlineHinted = getUnknownValue();
-$inlineHinted->grantPermission('write');  // with explicit variable name
-
-/** @var User */
-$hinted = getUnknownValue();
-$hinted->getEmail();                      // type from @var, no variable name needed
-
-
-// ── String Interpolation ────────────────────────────────────────────────────
-// Completion is suppressed inside plain string content but still works in
-// PHP interpolation contexts. Try: delete the property name after -> and
-// trigger completion to see members offered.
-
-$greeting = "Hello {$user->getProfile()->bio}";   // brace interpolation — full completion
-$info = "Name: $user->displayName";               // simple interpolation — completion only for valid items
-$nope = 'no $user-> here';                        // single-quoted — completion suppressed
-$plain = "just plain text";                       // no $ — completion suppressed
-
-
-// ── Parenthesized RHS Assignment ─────────────────────────────────────────────
-// Try completion after -> on $parenUser, which is assigned from a parenthesized expression.
-
-$parenUser = (new User('Bob', 'bob@example.com'));
-$parenUser->getEmail();      // resolves correctly after fix
-$parenUser->getName();       // inherited method
-
-// Parenthesized ternary assignment
-$ternaryUser = (rand(0, 1) ? new User('Carol', 'carol@example.com') : new AdminUser('Dave', 'dave@example.com'));
-$ternaryUser->getEmail();    // available on both branches
-$ternaryUser->grantPermission('edit'); // only on AdminUser branch
-
-
-// ── Class-String Variable Static Access ─────────────────────────────────────
-// When a variable holds a class-string from `Foo::class`, using `$var::`
-// resolves to the referenced class and offers its static members.
-
-$cls = User::class;
-$cls::findByEmail('a@b.c');  // static method from User
-$cls::TYPE_ADMIN;            // class constant
-$cls::$defaultRole;          // static property
-
-
-// ── Signature Help ──────────────────────────────────────────────────────────
-// Parameter hints appear automatically when typing inside function/method
-// call parentheses. The active parameter is tracked as you type commas.
-//
-// Try: place the cursor inside the parentheses and see the signature popup.
-
-createUser('Alice', 'alice@example.com');  // standalone function
-$user->setStatus(Status::Active);          // instance method
-User::findByEmail('alice@example.com');    // static method
-new User('Bob', 'bob@example.com');        // constructor
-
-class ClassTest {
-    function test()
+class InstanceCompletionDemo
+{
+    public function demo(): void
     {
-        return self::class;          // also works with self::class / static::class
+        $zoo = new Zoo();
+
+        $zoo->aardvark();            // own method
+        $zoo->baboon;                // own property
+        $zoo->buffalo;               // constructor-promoted property
+        $zoo->cheetah;               // readonly promoted (from base)
+        $zoo->dingo();               // trait method
+        $zoo->elephant('Hi');        // trait method
+        $zoo->falcon();              // inherited from parent
+        $zoo->gorilla;               // @property (own class)
+        $zoo->hyena('x');            // @method (own class)
+        $zoo->iguana;                // @property-read (interface)
+        $zoo->jaguar();              // @method (interface)
+        // MUST NOT appear: $keeper (protected), $ceo (private), nocturnal() (private)
     }
 }
 
 
-// ── Static & Enum Completion ────────────────────────────────────────────────
-
-User::$defaultRole;          // static property
-User::TYPE_ADMIN;            // class constant
-User::findByEmail('a@b.c');  // static method
-User::make('Bob');           // inherited static (Model)
-User::query();               // @mixin Builder (Model)
-
-Status::Active;              // backed enum case
-Status::Active->label();     // enum method
-Priority::High;              // int-backed enum
-Mode::Manual;                // unit enum
-
-
 // ── Method & Property Chaining ──────────────────────────────────────────────
 
-$user->setName('Bob')->setStatus(Status::Active)->getEmail();
-$user->getProfile()->getDisplayName();   // return type chain
-$profile = $user->getProfile();
-$profile->getUser()->getEmail();         // variable → method chain
+class ChainingDemo
+{
+    public function demo(): void
+    {
+        $studio = new ScaffoldingChainingDemo();
 
-$order = new Order(new Customer('a@b.com', new Address()), 42.0);
-$order->customer->address->city;         // deep property chain
-$order->customer->address->format();
+        // Fluent method chains — MUST NOT appear: calibrate() (protected)
+        $studio->brush->setSize('large')->setStyle('pointed')->stroke();
 
-$maybe = User::find(1);                  // null-safe chaining
-$maybe?->getProfile()?->getDisplayName();
+        // Return type chains
+        $studio->brush->getCanvas()->title();
+
+        // Variable → method chain
+        $canvas = $studio->brush->getCanvas();
+        $canvas->getBrush()->stroke();
+
+        // Deep property chain
+        $studio->canvas->easel->material;
+        $studio->canvas->easel->height();
+
+        // Null-safe chaining
+        $maybe = Brush::find(1);
+        $maybe?->getCanvas()?->title();
+
+        // Multi-line method chains
+        $studio->brush->setSize('large')
+            ->setStyle('pointed')
+            ->stroke();
+
+        // Variable assigned from chain
+        $directBrush = $studio->brush->getCanvas()->getBrush();
+        $directBrush->stroke();
+
+        // (new Class())->method()
+        $fromNew = (new Canvas())->getBrush();
+        $fromNew->stroke();
+
+        // Intermediate variable from property access
+        $easel = (new Canvas())->easel;
+        $easel->material;
+    }
+}
 
 
-// ── Multi-line Method Chains ────────────────────────────────────────────────
-// Try: trigger completion after `->` on continuation lines. The resolver joins
-// multi-line chains automatically, so fluent builder patterns work seamlessly.
+// ── @var Docblock Override ──────────────────────────────────────────────────
 
-$user->setName('Bob')
-    ->setStatus(Status::Active)
-    ->getEmail();                         // resolves through the full chain
+class VarDocblockDemo
+{
+    public function demo(): void
+    {
+        /** @var Pencil $inlineHinted */
+        $inlineHinted = getUnknownValue();
+        $inlineHinted->sketch();                  // with explicit variable name
 
-User::query()
-    ->where('active', true)
-    ->where('name', 'Bob');               // static call base + continuations
-
-$maybe?->getProfile()
-    ?->getDisplayName();                  // nullsafe continuations
-
-// Blank lines inside a chain are skipped automatically:
-$user->setName('Bob')
-
-    ->setStatus(Status::Active)
-
-    ->getEmail();                         // works even with blank lines
-
-
-// ── Chained Method Calls in Variable Assignment ─────────────────────────────
-// When a variable is assigned from a chained call, the full chain is walked
-// to resolve the stored type.
-
-$storedProfile = $user->getProfile();
-$storedName = $storedProfile->getUser()->getName(); // $var->method()->method()
-
-$directProfile = $user->getProfile()->getUser(); // chain stored in variable
-$directProfile->getEmail();              // resolves to User
-
-$staticBuilt = User::make('test');       // Static::method() in assignment
-$staticBuilt->getEmail();               // resolves to User
-
-$fromNew = (new UserProfile($user))->getUser(); // (new Class())->method()
-$fromNew->getEmail();                    // resolves to User
+        /** @var Pen */
+        $hinted = getUnknownValue();
+        $hinted->write();                         // without variable name (PHPStorm fails this)
+    }
+}
 
 
 // ── Return Type Resolution ──────────────────────────────────────────────────
 
-$made = User::make('Charlie');            // static return type → User
-$made->getEmail();
+class ReturnTypeDemo
+{
+    public function demo(): void
+    {
+        $made = Pen::make();                      // static return type → Pen
+        $made->write();
 
-$admin = AdminUser::make('Eve');          // static on subclass → AdminUser
-$admin->grantPermission('edit');          // resolves to AdminUser, not User/Model
+        $marker = Marker::make();                 // static on subclass → Marker
+        $marker->highlight();                     // resolves to Marker, not Pen
 
-$fluent = $admin->setName('Eve');         // setName returns static → AdminUser
-$fluent->grantPermission('delete');       // chained static stays on the subclass
+        $fluent = $marker->rename('Bold');         // rename returns static → Marker
+        $fluent->highlight();                     // chained static stays on the subclass
 
-$created = createUser('Dana', 'dana@example.com');
-$created->getName();                      // function return type
+        $created = makePen();
+        $created->write();                        // function return type
+        // MUST NOT appear: refill() (private)
 
-$container = new Container();
-$resolved = $container->make(User::class);
-$resolved->getEmail();                    // conditional return: class-string<T> → T
-
-$appUser = app(User::class);              // conditional on standalone function
-$appUser->getEmail();
-
-$found = findOrFail(1);                   // User|AdminUser union
-$found->getName();                        // available on both types
-
-
-// ── Method-level @template (General Case) ───────────────────────────────────
-// When a method declares @template T and @param T $param, the resolver infers
-// T from the actual argument type — not just class-string<T>, but any object.
-
-$mapper = new ObjectMapper();
-$mapped = $mapper->wrap($user);           // wrap(@param T $item): Collection<T>
-$mapped->first();                         // → User (T resolved to User)
-
-$identity = $mapper->identity($user);     // identity(@param T): T
-$identity->getEmail();                    // → User methods
-
-$mapper->wrap(new Product())->first()->getPrice(); // new expression arg → Product
-
-
-function handleIntersection(User&Loggable $entity): void {
-    $entity->getEmail();                  // from User
-    $entity->log('saved');                // from Loggable
+        $found = pickPenOrPencil();               // Pen|Pencil union
+        $found->label();                          // available on both types
+    }
 }
-
-
-// ── Class Alias ─────────────────────────────────────────────────────────────
-
-$p = new Profile(new User('Eve', 'eve@example.com'));
-$p->getDisplayName();                     // Profile → UserProfile via `use ... as`
-
-
-// ── Ambiguous Variables ─────────────────────────────────────────────────────
-
-if (rand(0, 1)) {
-    $ambiguous = new Container();
-} else {
-    $ambiguous = new AdminUser('Y', 'y@example.com');
-}
-$ambiguous->getStatus();                  // available on both branches
 
 
 // ── Type Narrowing ──────────────────────────────────────────────────────────
 
-$a = findOrFail(1);                       // User|AdminUser
-if ($a instanceof AdminUser) {
-    $a->grantPermission('x');             // narrowed to AdminUser
-} else {
-    $a->getEmail();                       // narrowed to User
+class TypeNarrowingDemo
+{
+    public function demo(): void
+    {
+        $specimen = pickRockOrBanana();           // Rock|Banana
+        if ($specimen instanceof Rock) {
+            $specimen->crush();                   // narrowed to Rock
+            // MUST NOT appear: peel() (Banana only)
+        } else {
+            $specimen->peel();                    // narrowed to Banana (else branch)
+            // MUST NOT appear: crush() (Rock only)
+        }
+
+        if (!$specimen instanceof Rock) {
+            $specimen->peel();                    // negated instanceof
+        }
+
+        $unknown = getUnknownValue();
+        if (is_a($unknown, Rock::class)) {
+            $unknown->crush();                    // is_a() narrowing
+        }
+
+        $target = getUnknownValue();
+        assert($target instanceof Banana);
+        $target->peel();                          // assert() narrowing
+    }
 }
-
-if (!$a instanceof AdminUser) {
-    $a->getEmail();                       // negated instanceof
-}
-
-$c = getUnknownValue();
-if (is_a($c, AdminUser::class)) {
-    $c->grantPermission('edit');          // is_a() narrowing
-}
-
-$d = findOrFail(1);
-if (get_class($d) === User::class) {
-    $d->getEmail();                       // get_class() identity
-}
-
-$e = findOrFail(1);
-if ($e::class === AdminUser::class) {
-    $e->grantPermission('x');             // ::class identity
-}
-
-$f = getUnknownValue();
-assert($f instanceof User);
-$f->getEmail();                           // assert() narrowing
-
-$g = getUnknownValue();
-$narrowed = match (true) {
-    $g instanceof AdminUser => $g->grantPermission('approve'),
-    is_a($g, User::class)  => $g->getEmail(),
-    default                 => null,
-};
 
 
 // ── Custom Assert Narrowing ─────────────────────────────────────────────────
 
-$i = getUnknownValue();
-assertUser($i);                           // @phpstan-assert User $value
-$i->getEmail();
+class AssertNarrowingDemo
+{
+    public function demo(): void
+    {
+        $unknown = getUnknownValue();
+        assertRock($unknown);                     // @phpstan-assert Rock $value
+        $unknown->crush();
 
-$j = findOrFail(1);
-if (isAdmin($j)) {                        // @phpstan-assert-if-true AdminUser
-    $j->grantPermission('sudo');
-} else {
-    $j->getEmail();
-}
+        $sample = pickRockOrBanana();
+        if (isRock($sample)) {                    // @phpstan-assert-if-true Rock
+            $sample->crush();
+        } else {
+            $sample->peel();
+        }
 
-$k = findOrFail(1);
-if (isRegularUser($k)) {                  // @phpstan-assert-if-false AdminUser
-    $k->getEmail();
-} else {
-    $k->grantPermission('x');
+        $maybe = pickRockOrBanana();
+        if (isBanana($maybe)) {                   // @phpstan-assert-if-false Rock
+            $maybe->peel();
+        } else {
+            $maybe->crush();
+        }
+    }
 }
 
 
 // ── Guard Clause Narrowing (Early Return / Throw) ──────────────────────────
 
-$m = findOrFail(1);                       // User|AdminUser
-if (!$m instanceof User) {
-    return;                               // early return — guard clause
+class GuardClauseDemo
+{
+    public function demo(): void
+    {
+        $subject = pickRockOrBanana();            // Rock|Banana
+        if (!$subject instanceof Banana) {
+            return;                               // early return — guard clause
+        }
+        $subject->peel();                         // narrowed to Banana after guard
+
+        $candidate = pickRockOrBanana();          // Rock|Banana
+        if ($candidate instanceof Rock) {
+            throw new Exception('no rocks');       // early throw — guard clause
+        }
+        $candidate->peel();                       // narrowed to Banana (Rock excluded)
+
+        $unknown = getUnknownValue();
+        if (!$unknown instanceof Rock) return;    // single-statement guard (no braces)
+        $unknown->crush();                        // narrowed to Rock
+    }
 }
-$m->getEmail();                           // narrowed to User after guard
-
-$n = findOrFail(1);
-if ($n instanceof AdminUser) {
-    throw new Exception('no admins');     // early throw — guard clause
-}
-$n->getEmail();                           // narrowed to User (AdminUser excluded)
-
-$o = findOrFail(1);
-if ($o instanceof User) {
-    return;
-}
-if ($o instanceof AdminUser) {
-    return;
-}
-// $o has been fully narrowed by sequential guards
-
-$q = getUnknownValue();
-if (!$q instanceof User) return;          // single-statement guard (no braces)
-$q->getEmail();                           // narrowed to User
-
-
-// ── Ternary Narrowing ──────────────────────────────────────────────────────
-
-$model = findOrFail(1);
-$email = $model instanceof User ? $model->getEmail() : 'unknown';
 
 
 // ── Generics (@template / @extends) ────────────────────────────────────────
 
-$repo = new UserRepository();
-$repo->find(1)->getEmail();               // Repository<User>::find() → User
-$repo->first()->getName();
-$repo->findOrNull(1)?->getEmail();        // ?User
+class GenericsDemo
+{
+    public function demo(): void
+    {
+        $repo = new PenRepository();
+        $repo->find(1)->write();                  // Repository<Pen>::find() → Pen
+        $repo->findOrNull(1)?->write();           // ?Pen
 
-$users = new UserCollection();            // TypedCollection<int, User>
-$users->first()->getEmail();
-$users->adminsOnly();                     // own method
+        $pens = new PenCollection();              // TypedCollection<int, Pen>
+        $pens->first()->write();
+        // MUST NOT appear: refill() (private on Pen)
+        $pens->thickOnly();                       // own method on subclass
 
-$cachingRepo = new CachingUserRepository();
-$cachingRepo->find(1)->getEmail();        // grandparent generics
+        $cachingRepo = new CachingPenRepository();
+        $cachingRepo->find(1)->write();           // grandparent generics
 
-$responses = new ResponseCollection();    // @phpstan-extends variant
-$responses->first()->getStatusCode();
+        $responses = new ResponseCollection();    // @phpstan-extends variant
+        $responses->first()->getStatusCode();
+    }
+}
+
+
+// ── Conditional Return Types ────────────────────────────────────────────────
+
+class ConditionalReturnDemo
+{
+    public function demo(): void
+    {
+        $container = new Container();
+        $resolved = $container->make(Pen::class);
+        $resolved->write();                       // class-string<T> → T
+
+        $appPen = app(Pen::class);                // conditional on standalone function
+        $appPen->write();
+    }
+}
 
 
 // ── Method-Level @template ──────────────────────────────────────────────────
 
-$locator = new ServiceLocator();
-$locator->get(User::class)->getEmail();           // class-string<T> → T
-$locator->get(UserProfile::class)->setBio('hi');
+class MethodTemplateDemo
+{
+    public function demo(): void
+    {
+        $locator = new ServiceLocator();
+        $locator->get(Pen::class)->write();               // class-string<T> → T
 
-Factory::create(User::class)->getEmail();         // static @template
-resolve(AdminUser::class)->grantPermission('x');  // function @template
+        Factory::create(Pen::class)->write();             // static @template
+        resolve(Marker::class)->highlight();              // function @template
+
+        $mapper = new ObjectMapper();
+        $mapped = $mapper->wrap(new Pen());
+        $mapped->first();                         // → Pen (T resolved from argument)
+
+        $mapper->wrap(new Product())->first()->getPrice(); // new expression arg → Product
+    }
+}
 
 
 // ── Trait Generic Substitution ──────────────────────────────────────────────
 
-Product::factory()->create();             // @use HasFactory<UserFactory> → UserFactory
-Product::factory()->count(5)->make();     // count() returns static, make() returns Product
-Product::factory()->state([])->create();  // state() returns static, create() returns Product
+class TraitGenericDemo
+{
+    public function demo(): void
+    {
+        Product::factory()->create();             // @use HasFactory<UserFactory> → UserFactory
+        Product::factory()->count(5)->make();     // count() returns static, make() returns Product
 
-$idx = new UserIndex();                   // @use Indexable<int, User>
-$idx->get()->getEmail();                  // TValue → User
+        $idx = new PenIndex();                    // @use Indexable<int, Pen>
+        $idx->get()->write();                     // TValue → Pen
+    }
+}
 
 
 // ── Foreach & Array Access ──────────────────────────────────────────────────
 
-/** @var list<User> $members */
-$members = getUnknownValue();
-foreach ($members as $member) {
-    $member->getEmail();                  // element type from list<User>
+class ForeachArrayAccessDemo
+{
+    public function demo(): void
+    {
+        /** @var list<Pen> $members */
+        $members = getUnknownValue();
+        foreach ($members as $member) {
+            $member->write();                     // element type from list<Pen>
+        }
+        $members[0]->color();                     // array access element type
+
+        /** @var array<int, Pen> */
+        $annotated = [];                          // @var without variable name
+        $annotated[0]->write();                   // type from next-line annotation
+
+        $inferred = [new Pen(), new Marker()];
+        $inferred[0]->write();                    // element type inferred from literal
+    }
 }
-$members[0]->getName();                   // array access element type
-
-
-/** @var array<int, AdminUser> $admins */
-$admins = getUnknownValue();
-foreach ($admins as $admin) {
-    $admin->grantPermission('x');
-}
-$admins[0]->grantPermission('y');         // variable key works too
-
-/** @var array<int, User> */
-$annotated = [];                          // @var without variable name
-$annotated[0]->getEmail();                // type from next-line annotation
-
-/** @var list<AdminUser> */
-$listed = [];
-$listed[0]->grantPermission('z');         // list<> without variable name
-
-$inferred = [new User('', ''), new AdminUser('', '')];
-$inferred[0]->getName();                  // element type inferred from literal
-
-[User::findByEmail('a@b.com')][0]->getEmail();  // inline array literal access
-
-end($admins)->grantPermission('w');       // inline end() element extraction
 
 
 // ── Array Destructuring ────────────────────────────────────────────────────
 
-/** @var list<User> */
-[$first, $second] = getUnknownValue();
-$first->getEmail();                       // destructured element type
+class ArrayDestructuringDemo
+{
+    public function demo(): void
+    {
+        /** @var list<Pen> */
+        [$first, $second] = getUnknownValue();
+        $first->write();                          // destructured element type
+    }
+}
 
 
 // ── Array Shapes ────────────────────────────────────────────────────────────
 
-$config = ['host' => 'localhost', 'port' => 3306, 'author' => new User('', '')];
-$config[''];                              // key completion: host, port, author
-$config['author']->getEmail();            // value type → User
+class ArrayShapeDemo
+{
+    public function demo(): void
+    {
+        // Literal array shape — key completion and value types
+        $config = ['host' => 'localhost', 'port' => 3306, 'tool' => new Pen()];
+        $config[''];                              // Try: key completion: host, port, tool
+        $config['tool']->write();                 // value type → Pen
 
-$bag = ['status' => 'ok'];
-$bag['user'] = new User('', '');          // incremental assignment
-$bag[''];                                 // keys: status, user
-$bag['user']->getEmail();
+        // Annotated shape
+        /** @var array{first: Pen, second: Pencil} $pair */
+        $pair = getUnknownValue();
+        $pair['first']->write();
+        $pair['second']->sketch();
 
-/** @var array{first: User, second: AdminUser} $pair */
-$pair = getUnknownValue();
-$pair['first']->getName();
-$pair['second']->grantPermission('admin');
-
-$collected = [];                          // push-style inference
-$collected[] = new User('', '');
-$collected[] = new AdminUser('', '');
-$collected[0]->getName();
-
-$cfg = getAppConfig();
-$cfg['logger']->getEmail();               // shape from function return
+        // Shape from function return type
+        $cfg = getAppConfig();
+        $cfg['logger']->write();
+    }
+}
 
 
 // ── Object Shapes ───────────────────────────────────────────────────────────
 
-/** @var object{title: string, score: float} $item */
-$item = getUnknownValue();
-$item->title;                             // object shape property
-$item->score;
+class ObjectShapeDemo
+{
+    public function demo(): void
+    {
+        /** @var object{title: string, score: float} $item */
+        $item = getUnknownValue();
+        $item->title;                             // object shape property
+        $item->score;
+    }
+}
 
-/** @var object{name: string, value: int}&\stdClass $obj */
-$obj = getUnknownValue();
-$obj->name;                               // intersected with \stdClass
 
+// ── Spread Operator Type Tracking ───────────────────────────────────────────
 
-// ── $_SERVER Superglobal ────────────────────────────────────────────────────
+class SpreadOperatorDemo
+{
+    public function demo(): void
+    {
+        /** @var list<Pen> */
+        $penList = [];
+        /** @var list<Pencil> */
+        $pencilList = [];
 
-$_SERVER['REQUEST_METHOD'];               // known key completion
-$_SERVER['HTTP_HOST'];
-$_SERVER['REMOTE_ADDR'];
+        $allPens = [...$penList];
+        $allPens[0]->write();                     // resolves Pen from spread
+
+        $everything = [...$penList, ...$pencilList];
+        $everything[0]->label();                  // union: Pen|Pencil from multiple spreads
+    }
+}
 
 
 // ── Clone Expression ────────────────────────────────────────────────────────
 
-$copy = clone $user;
-$copy->getEmail();                        // preserves User type
-
-$immutable = new Immutable(42);
-$cloned = clone $immutable;
-$cloned->getValue();
-
-
-// ── Constants (Go-to-Definition) ────────────────────────────────────────────
-
-define('APP_VERSION', '1.0.0');
-define('MAX_RETRIES', 3);
-echo APP_VERSION;                         // Ctrl+Click → jumps to define()
-$retries = MAX_RETRIES;
-
-
-// ── Static Property & Class Constant Go-to-Definition ───────────────────────
-
-User::$defaultRole;                       // Ctrl+Click → jumps to static property declaration
-User::TYPE_ADMIN;                         // Ctrl+Click → jumps to class constant declaration
-Model::CONNECTION;                        // Ctrl+Click → jumps to inherited constant
-
-
-// ── Variable Go-to-Definition ───────────────────────────────────────────────
-
-$typed = getUnknownValue();
-echo $typed;                              // Ctrl+Click on $typed → jumps to assignment
-
-
-// ── Type Hint Go-to-Definition ──────────────────────────────────────────────
-// Ctrl+Click on any class/interface name used as a type hint — in parameters,
-// return types, property types, catch blocks, and even inside docblock
-// annotations — to jump to its definition.
-
-// Parameter type hints (simple, nullable, union, intersection):
-function typeHintGtdParam(User $u): void {}                       // Ctrl+Click User
-function typeHintGtdNullable(?User $u): void {}                   // Ctrl+Click User after ?
-function typeHintGtdUnion(User|AdminUser $u): void {}             // Ctrl+Click either type
-function typeHintGtdIntersection(Renderable&Loggable $x): void {} // Ctrl+Click either type
-
-// Return type hints:
-function typeHintGtdReturn(): Response { return new Response(200); } // Ctrl+Click Response
-
-// Catch block exception types — Ctrl+Click NotFoundException or ValidationException:
-try { typeHintGtdParam(new User('', '')); } catch (NotFoundException|ValidationException $e) {}
-
-// Extends / implements — Ctrl+Click User, Renderable, or Loggable in scaffolding below.
-
-// ── Context-Aware Class Name Filtering ──────────────────────────────────────
-// Completions are filtered by syntactic context. Only valid suggestions appear.
-// Try: erase the class name after each keyword and re-type a prefix to see filtering.
-//   extends (class)     → non-final classes only (no interfaces, traits, enums, or final classes)
-//   extends (interface) → interfaces only
-//   implements          → interfaces only
-//   use (inside class)  → traits only
-//   instanceof          → classes, interfaces, and enums (no traits)
-//   new                 → concrete non-abstract classes only
-
-// ── Go-to-Implementation ────────────────────────────────────────────────────
-// Right-click → "Go to Implementations" (or editor shortcut) on an interface
-// or abstract class name to jump to all concrete classes that implement it.
-// Also works on method calls typed as an interface/abstract class.
-
-// Try: Go-to-Implementation on "Renderable" → jumps to User and HtmlReport
-//      Go-to-Implementation on "format" below → jumps to format() in each implementor
-function renderDemo(Renderable $item): string {
-    return $item->format('<b>{name}</b>');
+class CloneDemo
+{
+    public function demo(): void
+    {
+        $pen = new Pen('blue');
+        $copy = clone $pen;
+        $copy->write();                           // preserves Pen type
+    }
 }
 
 
-// Docblock type references — Ctrl+Click class names inside these annotations:
-/**
- * @param TypedCollection<int, User> $items   Ctrl+Click User or TypedCollection
- * @return Response                           Ctrl+Click Response
- * @throws NotFoundException                  Ctrl+Click NotFoundException
- */
-function typeHintGtdDocblock($items) { return new Response(200); }
+// ── Class-String Variable Static Access ─────────────────────────────────────
 
-/** @var User $docblockVar */
-$docblockVar = getUnknownValue();
-$docblockVar->getEmail();                 // Ctrl+Click User in the @var above
-
-
-// ── Callable Snippet Insertion ──────────────────────────────────────────────
-// Completion inserts snippets with tab-stops for required params:
-
-$user->setName('Bob');                    // → setName(${1:$name})
-$user->toArray();                         // → toArray()  (no params)
-$user->addRoles();                        // → addRoles() (variadic)
-User::findByEmail('a@b.c');               // → findByEmail(${1:$email})
-$r = new Response(200);                   // → Response(${1:$statusCode})
+class ClassStringStaticDemo
+{
+    public function demo(): void
+    {
+        $cls = Pen::class;
+        $cls::make();                             // static method from Pen
+    }
+}
 
 
-// ── Type Hint Completion in Definitions ─────────────────────────────────────
-// When typing a type hint inside a function/method definition, return type,
-// or property declaration, completion offers PHP native scalar types
-// (string, int, float, bool, …) alongside class-name completions.
-// Constants and standalone functions are excluded since they're invalid
-// in type positions.
+// ── Ambiguous Variables ─────────────────────────────────────────────────────
 
-function typeHintDemo(User $user, string $name): User { return $user; }
-//                    ↑ type hint  ↑ scalar      ↑ return type
-typeHintDemo(); // // Try triggering completion after the `(` or `,` in these signatures
-
-
-function unionDemo(string|int $value, ?User $maybe): User|null { return $maybe; }
-//                 ↑ after |   ↑ after ?             ↑ after |
-unionDemo(); // Union types, nullable types, and intersection types
-
-// Property type hints after visibility modifiers:
-// (see Model class below — `public readonly string $uuid`)
-
-// Promoted constructor parameters with modifiers:
-// (see Customer class below — `private readonly string $email`)
-
-// Closures and arrow functions:
-$typedClosure = function(User $u): string { return $u->getName(); };
-$typedArrow = fn(int $x): float => $x * 1.5;
+class AmbiguousVariableDemo
+{
+    public function demo(): void
+    {
+        if (rand(0, 1)) {
+            $ambiguous = new Lamp();
+        } else {
+            $ambiguous = new Faucet();
+        }
+        $ambiguous->turnOff();                    // available on both branches
+        $ambiguous->dim();                        // available on Lamp branches
+        $ambiguous->drip();                       // available on Faucet branches
+    }
+}
 
 
-// ── Callable / Closure Variable Invocation ──────────────────────────────────
-// When a variable holds a closure or callable, invoking it resolves the
-// return type for completion.
+// ── Parenthesized Assignment ────────────────────────────────────────────────
 
-// Closure literal with native return type hint:
-$makeUser = function(): User { return new User('test', 'test@example.com'); };
-$makeUser()->getEmail();                  // resolves User from closure return type
-
-// Arrow function literal:
-$makeProfile = fn(): UserProfile => new UserProfile(new User('x', 'x@x.com'));
-$makeProfile()->getDisplayName();         // resolves UserProfile from arrow fn return type
-
-// Closure with `use` clause:
-$name = 'Alice';
-$factory = function() use ($name): User { return new User($name, 'a@b.com'); };
-$factory()->getEmail();                   // `use` clause doesn't interfere
-
-// Docblock callable return type annotation:
-/** @var \Closure(): Response $responder */
-$responder = getUnknownValue();
-$responder()->getBody();                  // resolves Response from @var Closure(): Response
-
-/** @var callable(string): User $loader */
-$loader = getUnknownValue();
-$loader('test')->getEmail();              // resolves User from callable(string): User
-
-// Chaining after callable invocation:
-$builder = function(): User { return new User('x', 'x@x.com'); };
-$builder()->setName('Bob')->getEmail();   // chain works after $fn()
-
-// Variable assigned from callable invocation:
-$fromClosure = $makeUser();
-$fromClosure->getEmail();                 // $result = $fn() resolves return type
+class ParenthesizedAssignmentDemo
+{
+    public function demo(): void
+    {
+        $parenPen = (new Pen('red'));
+        $parenPen->write();                       // resolves through parentheses
+    }
+}
 
 
-// ── Spread Operator Type Tracking ───────────────────────────────────────────
-// When array literals contain spread expressions (`...$var`), element types
-// are resolved from the spread variable's iterable annotation and merged.
+// ── String Interpolation ────────────────────────────────────────────────────
 
-/** @var list<User> $users */
-$users = [];
-/** @var list<AdminUser> $admins */
-$admins = [];
-
-// Single spread — preserves element type:
-$allUsers = [...$users];
-$allUsers[0]->getEmail();                 // resolves User from list<User>
-
-// Multiple spreads — union of element types:
-$everyone = [...$users, ...$admins];
-$everyone[0]->getEmail();                 // resolves User|AdminUser
-
-// Works with array<K,V> and Type[] annotations too:
-/** @var array<int, User> $indexed */
-$indexed = [];
-$copy = [...$indexed];
-$copy[0]->getName();                      // resolves User from array<int, User>
-
-/** @var User[] $typed */
-$typed = [];
-$merged = [...$typed];
-$merged[0]->getEmail();                   // resolves User from User[]
-
-// Spread combined with push-style assignments:
-$mixed = [...$users];
-$mixed[] = new AdminUser('root', 'root@example.com');
-$mixed[0]->getName();                     // resolves User|AdminUser
-
-// Works with array() syntax too:
-$legacy = array(...$users, ...$admins);
-$legacy[0]->getEmail();                   // resolves User|AdminUser
-
-
-// ── Multi-line @return & Broken Docblock Recovery ───────────────────────────
-
-$collection = collect([]);
-$collection->groupBy('key');             // multi-line @return resolves correctly
-$collection->map(fn($x) => $x);         // map() works despite groupBy's complex @return
-
-$recovered = (new BrokenDocRecovery())->broken();
-$recovered->working();                   // recovers `static` from broken @return static<
+class StringInterpolationDemo
+{
+    public function demo(): void
+    {
+        $pen = new Pen('blue');
+        $greeting = "Ink is {$pen->color()}";             // brace interpolation — full completion
+        $info = "Tool: $pen->ink";                        // simple interpolation
+        $nope = 'no $pen-> here';                         // single-quoted — suppressed
+    }
+}
 
 
 // ── Foreach over Generic Collection Classes ─────────────────────────────────
-// foreach resolves element types from @extends / @implements generic params.
 
-$eloquentUsers = new UserEloquentCollection();
-foreach ($eloquentUsers as $eu) {
-    $eu->getEmail();                     // resolves to User via @extends generics
+class CollectionForeachDemo
+{
+    public function demo(): void
+    {
+        $src = new ScaffoldingCollectionForeach();
+
+        // From method return type
+        foreach ($src->allMembers() as $user) {
+            $user->getName();             // via method return type → collection generics
+        }
+
+        // From new instance
+        $items = new UserEloquentCollection();
+        foreach ($items as $item) {
+            $item->getEmail();            // resolves to User via @extends generics
+        }
+
+        // From property type
+        foreach ($src->members as $user) {
+            $user->getEmail();            // via property type → collection generics
+        }
+
+        // From variable
+        $collection = $src->allMembers();
+        foreach ($collection as $user) {
+            $user->getName();             // via variable assignment scanning
+        }
+    }
 }
-
-// Open CollectionForeachDemo methods below for more examples.
 
 
 // ── Type Aliases (@phpstan-type / @phpstan-import-type) ─────────────────────
 
-$aliasDemo = new TypeAliasDemo();
-$userData = $aliasDemo->getUserData();
-$userData['name'];                       // @phpstan-type UserData → array shape key completion
-
-$importDemo = new TypeAliasImportDemo();
-$imported = $importDemo->fetchUser();
-$imported['email'];                      // @phpstan-import-type UserData from TypeAliasDemo
-
-
-// ── Anonymous Classes ───────────────────────────────────────────────────────
-// $this-> inside anonymous class bodies resolves to the anonymous class's
-// own members. Supports extends, implements, trait use, and promoted properties.
-
-$anon = new class extends Model {
-    public string $label;
-    public function tag(): string { return ''; }
-    public function demo() {
-        $this->tag();                    // own method
-        $this->label;                    // own property
-        $this->getName();                // inherited from Model
-    }
-};
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  DEMO CLASSES — features that require class / method context
-// ═══════════════════════════════════════════════════════════════════════════
-//
-//  Open these methods and trigger completion inside them.
-
-
-// ── Property Chains on $this and Parameters ─────────────────────────────────
-
-class PropertyChainDemo
+/**
+ * @phpstan-type UserData array{name: string, email: string, age: int}
+ * @phpstan-type StatusInfo array{code: int, label: string}
+ */
+class TypeAliasDemo
 {
-    public Order $order;
-
-    public function __construct(Order $order)
+    public function demo(): void
     {
-        $this->order = $order;
+        $data = $this->getUserData();
+        $data['name'];                    // @phpstan-type → array shape key completion
+
+        $status = $this->getStatus();
+        $status['label'];                 // StatusInfo alias → array shape keys
     }
 
-    public function simpleChain(): void
+    /** @return UserData */
+    public function getUserData(): array
     {
-        $customer = new Customer('test@example.com', new Address());
-        $customer->address->city;         // Address::$city
-        $customer->address->format();     // Address::format()
+        return ['name' => 'Alice', 'email' => 'alice@example.com', 'age' => 30];
     }
 
-    public function deepChain(): void
+    /** @return StatusInfo */
+    public function getStatus(): array
     {
-        $order = new Order(new Customer('a@b.com', new Address()), 99.99);
-        $order->customer->address->zip;   // Address::$zip
-        $order->customer->email;          // Customer::$email
+        return ['code' => 200, 'label' => 'OK'];
+    }
+}
+
+/**
+ * @phpstan-import-type UserData from TypeAliasDemo
+ * @phpstan-import-type StatusInfo from TypeAliasDemo as AliasedStatus
+ */
+class TypeAliasImportDemo
+{
+    public function demo(): void
+    {
+        $user = $this->fetchUser();
+        $user['email'];                   // imported UserData → array shape keys
+
+        $status = $this->fetchStatus();
+        $status['code'];                  // AliasedStatus → StatusInfo → array shape keys
     }
 
-    public function mixedThisAndVar(): void
+    /** @return UserData */
+    public function fetchUser(): array
     {
-        $this->order->customer->email;    // via $this
-        $local = new Order(new Customer('x@y.com', new Address()), 50.0);
-        $local->customer->address->format(); // via local variable
+        return ['name' => 'Bob', 'email' => 'bob@example.com', 'age' => 25];
+    }
+
+    /** @return AliasedStatus */
+    public function fetchStatus(): array
+    {
+        return ['code' => 404, 'label' => 'Not Found'];
     }
 }
 
 
-// ── Variable Property Access via Intermediate Variables ──────────────────────
+// ── Multi-line @return & Broken Docblock Recovery ───────────────────────────
 
-class VariablePropertyAccessDemo
+class BrokenDocblockDemo
 {
-    public Order $order;
-
-    public function fromNewInstance(): void
+    public function demo(): void
     {
-        $customer = new Customer('a@b.com', new Address());
-        $addr = $customer->address;
-        $addr->city;                      // Address::$city
-        $addr->format();                  // Address::format()
+        $collection = collect([]);
+        $collection->groupBy('key');             // multi-line @return resolves correctly
+
+        $recovered = (new BrokenDocRecovery())->broken();
+        $recovered->working();                   // recovers `static` from broken @return static<
     }
+}
 
-    public function fromThisProperty(): void
+
+// ── Callable / Closure Variable Invocation ──────────────────────────────────
+
+class ClosureInvocationDemo
+{
+    public function demo(): void
     {
-        $o = $this->order;
-        $c = $o->customer;
-        $c->email;                        // Customer::$email
-        $c->address->zip;                 // chained from resolved variable
+        // Closure literal with native return type hint
+        $makePen = function(): Pen { return new Pen(); };
+        $makePen()->write();                      // resolves Pen from closure return type
+
+        // Arrow function literal
+        $makePencil = fn(): Pencil => new Pencil();
+        $makePencil()->sketch();                  // arrow fn return type
+
+        // Docblock callable annotation
+        /** @var \Closure(): Pencil $supplier */
+        $supplier = getUnknownValue();
+        $supplier()->sharpen();                   // @var Closure() annotation
+
+        // Chaining after callable invocation
+        $builder = function(): Pen { return new Pen(); };
+        $builder()->rename('Bold')->write();      // chain after $fn()
+
+        // Variable assigned from callable invocation
+        $fromClosure = $makePen();
+        $fromClosure->write();                    // $result = $fn() resolves return type
+    }
+}
+
+
+// ── Anonymous Classes ───────────────────────────────────────────────────────
+
+class AnonymousClassDemo
+{
+    public function demo(): void
+    {
+        $anon = new class extends Pen {
+            public string $brand;
+            public function cap(): string { return ''; }
+            public function demo() {
+                $this->cap();                    // own method
+                $this->brand;                    // own property
+                $this->write();                  // inherited from Pen
+                // MUST NOT appear: refill() (private — not inherited)
+            }
+        };
     }
 }
 
@@ -792,36 +621,27 @@ class VariablePropertyAccessDemo
 
 class ExpressionTypeDemo
 {
-    private Response $response;
-    private ?Container $container;
-
-    public function matchExpr(string $name): void
+    public function demo(): void
     {
-        $service = match ($name) {
-            'reviews' => new ElasticProductReviewIndexService(),
-            'brands'  => new ElasticBrandIndexService(),
-            default   => null,
+        $src = new ScaffoldingExpressionType();
+
+        // Null-coalescing
+        $fallback = $src->backup ?? $src->primary;
+        $fallback->getStatusCode();       // Response method
+
+        // Match expression — shared members sort above branch-only members
+        $service = match (rand(0, 1)) {
+            0 => new ElasticProductReviewIndexService(),
+            1 => new ElasticBrandIndexService(),
         };
-        // Shared members (intersection) sort above branch-only members:
         $service->index();                // on both — sorted first
-        $service->reindex();              // ElasticProductReviewIndexService only — sorted after
-        $service->bulkDelete([]);         // ElasticBrandIndexService only — sorted after
-    }
+        $service->reindex();              // one branch only — sorted after
 
-    public function ternaryExpr(bool $flag): void
-    {
-        $svc = $flag
+        // Ternary
+        $svc = rand(0, 1)
             ? new ElasticProductReviewIndexService()
             : new ElasticBrandIndexService();
         $svc->index();                    // on both — sorted first
-        $svc->reindex();                  // only one branch — sorted after
-    }
-
-    public function nullCoalescing(): void
-    {
-        $svc = $this->container ?? $this->response;
-        $svc->make();                     // Container::make()
-        $svc->getStatusCode();            // Response::getStatusCode()
     }
 }
 
@@ -830,7 +650,7 @@ class ExpressionTypeDemo
 
 class SwitchDemo
 {
-    public function switchNewInstantiation(string $type): void
+    public function demo(string $type): void
     {
         switch ($type) {
             case 'reviews':
@@ -841,217 +661,104 @@ class SwitchDemo
                 break;
         }
         $service->index();                // on both classes
-        $service->reindex();              // ElasticProductReviewIndexService only
-        $service->bulkDelete([]);         // ElasticBrandIndexService only
-    }
-
-    public function switchInsideCase(string $driver): void
-    {
-        switch ($driver) {
-            case 'mysql':
-                $conn = new Response(200, 'OK');
-                $conn->getStatusCode();   // resolves inside the case body
-                break;
-        }
     }
 }
 
 
-// ── Laravel Eloquent Virtual Members ────────────────────────────────────────
-// Eloquent models gather virtual properties from many sources: $fillable,
-// $guarded, $hidden column names, $casts property and casts() method,
-// $attributes defaults, legacy and modern accessors, relationship methods
-// (with @return annotations or body-inferred), and query scopes. Builder
-// methods are also forwarded as static calls on the model class.
-// See BlogAuthor in the scaffolding section for the full model definition.
+// ── Array & Object Shapes in Methods ────────────────────────────────────────
 
-class EloquentVirtualMemberDemo
+class ShapeMethodDemo
 {
     public function demo(): void
     {
-        $author = new BlogAuthor();
+        $data = $this->getToolKit();
+        $data['pen']->write();            // Pen
+        $data['pencil']->sketch();        // Pencil
 
-        // Column name properties ($fillable / $guarded / $hidden → mixed)
-        $author->name;                    // virtual property → mixed (from $fillable)
-        $author->email;                   // virtual property → mixed (from $fillable)
-        $author->password;                // virtual property → mixed (from $hidden)
-        $author->id;                      // virtual property → mixed (from $guarded)
+        // Nested annotated shape
+        /** @var array{meta: array{page: int, total: int}, items: list<Pen>} $response */
+        $response = getUnknownValue();
+        $response['meta']['page'];        // nested shape key
+        $response['items'][0]->write();   // list element type
 
-        // $casts property — built-in cast types
-        $author->is_admin;                // virtual property → bool (from $casts, not $attributes)
-        $author->created_at;              // virtual property → \Carbon\Carbon
-        $author->options;                 // virtual property → array
-        $author->score;                   // virtual property → float
-        $author->balance;                 // virtual property → float (decimal:2)
+        // Nested keys inferred from literal — no annotation needed
+        $config = ['db' => ['host' => 'localhost', 'port' => 3306], 'debug' => true];
+        $config['db']['host'];            // Try: delete 'host' and trigger completion
 
-        // Enum cast — resolves to the enum class
-        $author->status;                  // virtual property → \Demo\OrderStatus
+        // Object shapes
+        $profile = $this->getProfile();
+        $profile->name;                   // object{name: string, ...}
 
-        // Custom cast class — type resolved from get() return type
-        $author->description->toHtml();   // Try: toHtml(), isEmpty()
-
-        // casts() method — overrides / extends the $casts property
-        $author->verified_at;             // virtual property → \Carbon\Carbon
-
-        // Attribute defaults — types inferred from literal values
-        $author->role;                    // virtual property → string
-        $author->is_active;               // virtual property → bool
-        $author->login_count;             // virtual property → int
-        $author->rating;                  // virtual property → float
-        $author->bio;                     // virtual property → null
-
-        // Relationship virtual properties (with @return annotations)
-        $author->posts;                   // virtual property → Collection<BlogPost>
-        $author->profile;                 // virtual property → AuthorProfile
-        $author->profile->getBio();       // chains to AuthorProfile methods
-        $author->tags;                    // virtual property → Collection<BlogTag>
-
-        // Body-inferred relationship (no @return annotation needed)
-        $author->commentable;             // virtual property → Model (morphTo)
-
-        // Scope methods — instance access
-        $author->active();                // virtual method from scopeActive
-        $author->ofGenre('fiction');       // virtual method from scopeOfGenre ($query stripped)
-
-        // Scope methods — static access
-        BlogAuthor::active();             // also available as static
-        BlogAuthor::ofGenre('fiction');    // $genre parameter preserved, $query stripped
-
-        // Legacy accessor: getDisplayNameAttribute() → $display_name
-        $author->display_name;            // virtual property → string
-
-        // Modern accessor: avatarUrl() returning Attribute → $avatar_url
-        $author->avatar_url;              // virtual property → mixed
-
-        // Builder-as-static forwarding
-        BlogAuthor::where('active', true);         // returns Builder<BlogAuthor>
-        BlogAuthor::where('active', 1)->get();     // returns Collection<BlogAuthor>
-        BlogAuthor::where('active', 1)->first();   // returns BlogAuthor|null
-        BlogAuthor::orderBy('name')->limit(10)->get(); // full chain resolution
-        // Query\Builder methods (@mixin) are also forwarded:
-        BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get();
-        // Completion for relations after a query
-        BlogAuthor::where('active', 1)->first()->profile->getBio();
-
-        // Scope methods on Builder instances — after chaining through
-        // builder methods, scopes from the model are still available:
-        BlogAuthor::where('active', 1)->active();          // scope on Builder
-        BlogAuthor::where('active', 1)->ofGenre('fiction'); // scope with params
-        BlogAuthor::where('active', 1)->active()->get();   // scope then builder
-        BlogAuthor::where('active', 1)->active()->ofGenre('sci-fi')->get(); // multi-scope chain
-
-        // Scopes also resolve on Builder variables:
-        $q = BlogAuthor::where('genre', 'fiction');
-        $q->active();                     // scope available on $q
-        $q->ofGenre('mystery');           // scope with extra parameter
-        $q->orderBy('name')->get();       // builder methods still work
-    }
-}
-
-// ── Custom Eloquent Collections ─────────────────────────────────────────────
-// Models with #[CollectedBy(CustomCollection::class)],
-// /** @use HasCollection<CustomCollection> */ use HasCollection;, or a
-// newCollection() method override returning the custom class all resolve to
-// the custom collection class instead of the standard
-// Illuminate\Database\Eloquent\Collection. This means custom methods
-// like topRated() and averageRating() appear in completions after ->get().
-
-// Builder chain → custom collection (via #[CollectedBy] on Review)
-$reviews = Review::where('published', true)->get();
-$reviews->topRated();        // custom method from ReviewCollection
-$reviews->averageRating();   // custom method from ReviewCollection
-$reviews->count();           // inherited from standard Collection
-$reviews->first();           // inherited — returns Review|null
-
-// Relationship properties also use the custom collection
-$review = new Review();
-$review->replies->topRated();       // HasMany<Review> → ReviewCollection
-$review->replies->averageRating();  // ReviewCollection method
-
-// ── Match Class-String Forwarding to Conditional Return Types ───────────────
-// When a variable holds a ::class value from a match expression and is then
-// passed to a function/method with @template T + @param class-string<T> +
-// @return T, the resolver traces the class-string back through the match arms.
-
-class MatchClassStringDemo
-{
-    public function viaMethod(string $typeName): void
-    {
-        $container = new Container();
-        $requestType = match ($typeName) {
-            'reviews' => ElasticProductReviewIndexService::class,
-            'brands'  => ElasticBrandIndexService::class,
-        };
-        $requestBody = $container->make($requestType);
-        $requestBody->index();            // on both classes
-        $requestBody->reindex();          // ElasticProductReviewIndexService only
-        $requestBody->bulkDelete([]);     // ElasticBrandIndexService only
+        $result = $this->getResult();
+        $result->tool->write();           // nested object → Pen
+        $result->meta->page;              // nested object shape
     }
 
-    public function viaFunction(string $typeName): void
-    {
-        $cls = match ($typeName) {
-            'reviews' => ElasticProductReviewIndexService::class,
-            'brands'  => ElasticBrandIndexService::class,
-        };
-        $resolved = resolve($cls);
-        $resolved->index();               // on both classes
-        $resolved->reindex();             // ElasticProductReviewIndexService only
-    }
+    /** @return array{pen: Pen, pencil: Pencil, active: bool} */
+    public function getToolKit(): array { return []; }
 
-    public function inlineChain(string $typeName): void
-    {
-        $container = new Container();
-        $cls = match ($typeName) {
-            'reviews' => ElasticProductReviewIndexService::class,
-            'brands'  => ElasticBrandIndexService::class,
-        };
-        $container->make($cls)->index();  // inline chain also works
-    }
+    /** @return object{name: string, age: int, active: bool} */
+    public function getProfile(): object { return (object) []; }
 
-    public function simpleClassStringVar(): void
-    {
-        $container = new Container();
-        $cls = User::class;
-        $user = $container->make($cls);
-        $user->getEmail();                // resolves through simple $cls variable
-    }
+    /** @return object{tool: Pen, meta: object{page: int, total: int}} */
+    public function getResult(): object { return (object) []; }
 
-    public function ternaryClassString(bool $flag): void
+    /** @param array{host: string, port: int, tool: Pen} $config */
+    public function fromParam(array $config): void
     {
-        $container = new Container();
-        $cls = $flag ? User::class : AdminUser::class;
-        $obj = $container->make($cls);
-        $obj->getName();                  // shared by both User and AdminUser
-        $obj->grantPermission('edit');    // from AdminUser branch
+        $config['host'];                  // string
+        $config['tool']->write();         // Pen
     }
 }
 
 
-// ── Template Parameter Bounds ───────────────────────────────────────────────
-// When a property's type is a template parameter (e.g. TNode), the resolver
-// falls back to the upper bound declared in @template TNode of SomeClass.
+// ── Named Key Destructuring from Array Shapes ───────────────────────────────
 
-/**
- * @template-covariant TNode of AstNode
- */
-class TemplateBoundsDemo
+class DestructuringShapeDemo
 {
-    /** @var TNode */
-    public $node;
-
-    /**
-     * @param TNode $node
-     */
-    public function __construct(AstNode $node)
-    {
-        $this->node = $node;
-    }
-
     public function demo(): void
     {
-        $this->node->getChildren();       // resolves via TNode's bound: AstNode
-        $this->node->getParent();         // AstNode::getParent()
+        // Named key from method return
+        ['pen' => $pen, 'pencil' => $pencil] = $this->getToolKit();
+        $pen->write();                    // Pen from 'pen' key
+        $pencil->sketch();                // Pencil from 'pencil' key
+
+        // Named key from @var annotated variable
+        /** @var array{pen: Pen, pencil: Pencil, active: bool} $data */
+        $data = getUnknownValue();
+        ['pen' => $myPen, 'pencil' => $myPencil] = $data;
+        $myPen->write();                  // Pen from 'pen' key
+        $myPencil->sketch();              // Pencil from 'pencil' key
+
+        // Positional from shape
+        /** @var array{Pen, Pencil} $pair */
+        $pair = getUnknownValue();
+        [$first, $second] = $pair;
+        $first->write();                  // Pen (positional index 0)
+        $second->sketch();                // Pencil (positional index 1)
+
+        // list() syntax
+        /** @var array{recipe: Recipe, servings: int} $meal */
+        $meal = getUnknownValue();
+        list('recipe' => $recipe) = $meal;
+        $recipe->ingredients;             // Recipe from 'recipe' key
+    }
+
+    /** @return array{pen: Pen, pencil: Pencil, count: int} */
+    public function getToolKit(): array { return []; }
+}
+
+
+// ── Generic Context Preservation ────────────────────────────────────────────
+
+class GenericContextDemo
+{
+    public function demo(): void
+    {
+        $src = new ScaffoldingGenericContext();
+
+        $src->chest->unwrap()->open();             // Box<Gift>::unwrap() → Gift
+        $src->display()->first()->open();          // TypedCollection<int, Gift>::first() → Gift
     }
 }
 
@@ -1060,308 +767,87 @@ class TemplateBoundsDemo
 
 class IterationDemo
 {
-    /** @var list<User> */
-    public array $users;
-
-    /** @return list<User> */
-    public function getUsers(): array { return []; }
-
-    /** @return array<Request, HttpResponse> */
-    public function getMapping(): array { return []; }
-
-    public function foreachFromMethod(): void
-    {
-        foreach ($this->getUsers() as $user) {
-            $user->getEmail();            // list<User> → User
-        }
-    }
-
-    public function foreachFromProperty(): void
-    {
-        foreach ($this->users as $user) {
-            $user->getEmail();            // list<User> → User
-        }
-    }
-
-    public function keyTypes(): void
-    {
-        foreach ($this->getMapping() as $req => $res) {
-            $req->getUri();               // Request (key type)
-            $res->getBody();              // HttpResponse (value type)
-        }
-    }
-
-    public function weakMapKeys(): void
-    {
-        /** @var \WeakMap<User, UserProfile> $profiles */
-        $profiles = new \WeakMap();
-        foreach ($profiles as $user => $profile) {
-            $user->getEmail();            // key: User
-            $profile->getDisplayName();   // value: UserProfile
-        }
-    }
-
-    public function destructuring(): void
-    {
-        [$a, $b] = $this->getUsers();
-        $a->getEmail();                   // destructured element type
-        $b->getName();
-    }
-}
-
-// ── Generator / Iterable Yield Type Resolution ─────────────────────────────
-
-class GeneratorDemo
-{
-    /** @return \Generator<int, User> */
-    public function getUsers(): \Generator
-    {
-        yield new User('Alice', 'alice@example.com');
-        yield new User('Bob', 'bob@example.com');
-    }
-
-    /** @return \Generator<int, Order, mixed, Response> */
-    public function processOrders(): \Generator
-    {
-        yield new Order(new Customer('Test', new Address('Main St', 'NYC', '10001')));
-    }
-
-    /** @return iterable<User> */
-    public function iterableUsers(): iterable
-    {
-        return [];
-    }
-
-    public function foreachGeneratorTwoParams(): void
-    {
-        // Generator<int, User> — value is 2nd param (User)
-        foreach ($this->getUsers() as $user) {
-            $user->getEmail();            // resolves to User
-            $user->getName();             // resolves to User
-        }
-    }
-
-    public function foreachGeneratorFourParams(): void
-    {
-        // Generator<int, Order, mixed, Response> — value is still 2nd param (Order)
-        foreach ($this->processOrders() as $order) {
-            $order->customer;              // resolves to Order (2nd param), not Response (4th)
-        }
-    }
-
-    public function foreachGeneratorVarAnnotation(): void
-    {
-        /** @var \Generator<int, User> $gen */
-        $gen = $this->getUsers();
-        foreach ($gen as $user) {
-            $user->getEmail();            // Generator<int, User> → User
-        }
-    }
-
-    public function foreachGeneratorFourParamsVar(): void
-    {
-        /** @var \Generator<int, User, mixed, Response> $gen */
-        $gen = $this->processOrders();
-        foreach ($gen as $item) {
-            $item->getEmail();            // 2nd param: User (not Response)
-        }
-    }
-
-    public function foreachIterableSingleParam(): void
-    {
-        // iterable<User> — single param is the value type
-        foreach ($this->iterableUsers() as $user) {
-            $user->getEmail();            // resolves to User
-        }
-    }
-
-    public function foreachGeneratorPropertyChain(): void
-    {
-        foreach ($this->getUsers() as $user) {
-            $user->getProfile()->getDisplayName();  // User → UserProfile → string
-        }
-    }
-
-    /**
-     * @param \Generator<int, Customer> $customers
-     */
-    public function foreachGeneratorParam(\Generator $customers): void
-    {
-        // @param annotation overrides native \Generator type
-        foreach ($customers as $customer) {
-            $customer->getName();         // resolves to Customer
-        }
-    }
-}
-
-
-// ── Generator Yield Type Inference Inside Bodies ────────────────────────────
-
-class GeneratorYieldDemo
-{
-    /** @return \Generator<int, User> */
-    public function findAll(): \Generator
-    {
-        // Reverse yield inference: since the return type declares
-        // Generator<int, User>, variables that appear in `yield $var`
-        // are inferred as User (TValue = 2nd param).
-        yield $user;
-        $user->getEmail();                // resolves to User
-
-        // Also works with key => value yields:
-        yield 0 => $anotherUser;
-        $anotherUser->getName();          // resolves to User
-    }
-
-    /** @return \Generator<int, User> */
-    public function yieldInsideControlFlow(): \Generator
-    {
-        // Yield inside control flow: `yield $var` inside if/foreach/while
-        // blocks still infers the variable type from TValue.
-        if (true) {
-            yield $user;
-            $user->getEmail();            // resolves to User inside the block
-        }
-        $user->getName();                 // resolves to User after the block too
-    }
-
-    /** @return \Generator<int, User> */
-    public function multipleYields(): \Generator
-    {
-        // Multiple yields with different variable names: each variable
-        // independently resolves to TValue.
-        yield $first;
-        $first->getEmail();               // resolves to User
-
-        yield $second;
-        $second->getName();               // resolves to User
-    }
-
-    /** @return \Generator<int, User> */
-    public function chainingThroughYieldInferred(): \Generator
-    {
-        // Chaining through a yield-inferred variable: method calls on
-        // the inferred type resolve the next link in the chain.
-        yield $user;
-        $user->getProfile()->getDisplayName(); // resolves through User → UserProfile
-    }
-
-    /** @return \Generator<int, string, Request, void> */
-    public function coroutine(): \Generator
-    {
-        // TSend inference: `$var = yield $expr` assigns the TSend type
-        // (3rd param) to $var. Here TSend is Request.
-        $request = yield 'ready';
-        $request->getUri();               // resolves to Request
-    }
-
-    /** @return \Generator<int, string, Request, void> */
-    public function tsendInsideNestedBlocks(): \Generator
-    {
-        // TSend inference inside nested control flow: the backward brace
-        // scan correctly finds the function's opening brace even when
-        // the yield is deeply nested.
-        while (true) {
-            if (true) {
-                $req = yield 'waiting';
-                $req->getUri();           // resolves to Request
-            }
-        }
-    }
-}
-
-
-// ── Array & Object Shapes in Methods ────────────────────────────────────────
-
-class ShapeDemo
-{
-    /**
-     * @return array{user: User, profile: UserProfile, active: bool}
-     */
-    public function getUserData(): array { return []; }
-
-    /**
-     * @return object{name: string, age: int, active: bool}
-     */
-    public function getProfile(): object { return (object) []; }
-
-    /**
-     * @return object{user: User, meta: object{page: int, total: int}}
-     */
-    public function getResult(): object { return (object) []; }
-
-    /**
-     * @param array{host: string, port: int, credentials: User} $config
-     */
-    public function fromParam(array $config): void
-    {
-        $config['host'];                  // string
-        $config['credentials']->getEmail(); // User
-    }
-
-    public function fromReturnType(): void
-    {
-        $data = $this->getUserData();
-        $data['user']->getName();         // User
-        $data['profile']->setBio('');     // UserProfile
-    }
-
-    public function nestedShapes(): void
-    {
-        /** @var array{meta: array{page: int, total: int}, items: list<User>} $response */
-        $response = getUnknownValue();
-        $response['meta']['page'];        // nested shape key
-        $response['items'][0]->getName(); // list element type
-    }
-
-    public function nestedLiteral(): void
-    {
-        // No @var annotation needed — nested keys are inferred from the literal.
-        $config = ['db' => ['host' => 'localhost', 'port' => 3306], 'debug' => true];
-        $config['db']['host'];            // Try: delete 'host' and trigger completion
-        $config['debug'];                 // first-level keys also work
-    }
-
-    public function objectShapes(): void
-    {
-        $profile = $this->getProfile();
-        $profile->name;                   // object{name: string, ...}
-        $profile->age;
-
-        $result = $this->getResult();
-        $result->user->getEmail();        // nested object → User
-        $result->meta->page;              // nested object shape
-    }
-}
-
-
-// ── Generic Context Preservation ────────────────────────────────────────────
-
-class GiftShop
-{
-    /** @var Box<Gift> */
-    public $giftBox;
-
-    /** @return TypedCollection<int, Gift> */
-    public function getGifts(): TypedCollection { return new TypedCollection(); }
-
     public function demo(): void
     {
-        // Property with generic @var — Box<Gift>::unwrap() → Gift
-        $this->giftBox->unwrap()->open();
-        $this->giftBox->unwrap()->getTag();
+        $src = new ScaffoldingIteration();
 
-        // Method with generic @return — TypedCollection<int, Gift>::first() → Gift
-        $this->getGifts()->first()->open();
-        $this->getGifts()->first()->getTag();
+        // From method
+        foreach ($src->allPens() as $pen) {
+            $pen->write();                // list<Pen> → Pen
+        }
+
+        // From property
+        foreach ($src->batch as $pen) {
+            $pen->write();
+        }
+
+        // Key types
+        foreach ($src->crossRef() as $pen => $pencil) {
+            $pen->write();                // Pen (key type)
+            $pencil->sketch();            // Pencil (value type)
+        }
+
+        // WeakMap keys
+        /** @var \WeakMap<Pen, Pencil> $mapping */
+        $mapping = new \WeakMap();
+        foreach ($mapping as $pen => $pencil) {
+            $pen->write();                // key: Pen
+            $pencil->sketch();            // value: Pencil
+        }
+
+        // Destructuring
+        [$first, $second] = $src->allPens();
+        $first->write();                  // destructured element type
+    }
+}
+
+
+// ── Array Function Type Preservation ────────────────────────────────────────
+
+class ArrayFuncDemo
+{
+    public function demo(): void
+    {
+        $src = new ScaffoldingArrayFunc();
+
+        $active = array_filter($src->members, fn(Pen $p) => $p->color() === 'blue');
+        $active[0]->write();              // Pen preserved through array_filter
+
+        $vals = array_values($src->members);
+        $vals[0]->write();                // Pen preserved through array_values
+
+        $pens = $src->roster();
+        $last = array_pop($pens);
+        $last->write();                   // single Pen from array_pop
+
+        $cur = current($src->members);
+        $cur->write();                    // Pen from current()
+
+        end($src->members)->write();      // inline end() without variable
+
+        foreach (array_filter($src->members, fn(Pen $p) => true) as $p) {
+            $p->color();                  // Pen preserved in foreach
+        }
+
+        $mapped = array_map(fn($p) => $p, $src->members);
+        $mapped[0]->write();              // Pen from array_map fallback
     }
 }
 
 
 // ── @throws Completion and Catch Variable Types ─────────────────────────────
 
-class ExceptionDemo
+class ExceptionDemo extends ScaffoldingException
 {
+    public function demo(): void
+    {
+        try {
+            $this->riskyOperation();
+        } catch (ValidationException $e) {
+            $e->getMessage();             // catch variable resolves exception type
+        }
+    }
+
     /**
      * Typing `@` in this docblock suggests @throws for each uncaught exception.
      *
@@ -1404,39 +890,6 @@ class ExceptionDemo
     {
         $this->safeOperation();
     }
-
-    /**
-     * Catch variable resolves to the caught exception type.
-     */
-    public function catchVariable(): void
-    {
-        try {
-            $this->riskyOperation();
-        } catch (ValidationException $e) {
-            $e->getMessage();             // ValidationException members
-        }
-    }
-
-    /**
-     * Narrower catch (RuntimeException) doesn't handle broader Exception,
-     * so Exception escapes as a propagated @throws.
-     *
-     * @throws \Exception
-     */
-    public function propagatedWithCatchFilter(): void
-    {
-        try {
-            $this->throwsException();
-        } catch (\RuntimeException $e) {
-            // catches RuntimeException, NOT Exception
-        }
-    }
-
-    private function lookup(int $id): ?array { return null; }
-    private function riskyOperation(): void {}
-
-    /** @throws \Exception */
-    private function throwsException(): void { throw new \Exception('error'); }
 }
 
 
@@ -1444,6 +897,15 @@ class ExceptionDemo
 
 class ParamOverrideDemo
 {
+    public function demo(): void
+    {
+        foreach ($this->ingredients as $ingredient) {
+            $ingredient->name;              // Ingredient::$name
+            $ingredient->format();          // Ingredient::format()
+        }
+        $this->recipe->title;               // Recipe::$title
+    }
+
     /**
      * @param list<Ingredient> $ingredients
      * @param Recipe $recipe
@@ -1452,259 +914,600 @@ class ParamOverrideDemo
         public array $ingredients,          // @param overrides to list<Ingredient>
         public object $recipe,              // @param overrides to Recipe
     ) {}
+}
 
+
+// ── Generator / Iterable Yield Type Resolution ─────────────────────────────
+
+class GeneratorDemo
+{
     public function demo(): void
     {
-        // $this->ingredients is list<Ingredient> from @param, not just array
-        foreach ($this->ingredients as $ingredient) {
-            $ingredient->name;              // Ingredient::$name
-            $ingredient->format();          // Ingredient::format()
+        // Generator<int, Pen> — value is 2nd param (Pen)
+        foreach ($this->getPens() as $pen) {
+            $pen->write();                // resolves to Pen
         }
 
-        // $this->recipe is Recipe from @param, not just object
-        $this->recipe->title;               // Recipe::$title
-    }
-}
+        // Generator<int, Pencil, mixed, Pen> — value is still 2nd param (Pencil)
+        foreach ($this->processPencils() as $pencil) {
+            $pencil->sketch();            // Pencil (2nd param), not Pen (4th)
+        }
 
-// ── Foreach over Generic Collection Classes ─────────────────────────────────
+        // @var annotated generator
+        /** @var \Generator<int, Pen> $gen */
+        $gen = $this->getPens();
+        foreach ($gen as $pen) {
+            $pen->write();                // Generator<int, Pen> → Pen
+        }
 
-class CollectionForeachDemo
-{
-    public UserEloquentCollection $users;
+        // iterable<Pen> — single param is the value type
+        foreach ($this->iterablePens() as $pen) {
+            $pen->write();
+        }
 
-    public function getUsers(): UserEloquentCollection
-    {
-        return new UserEloquentCollection();
-    }
-
-    public function foreachNewCollection(): void
-    {
-        $items = new UserEloquentCollection();
-        foreach ($items as $item) {
-            $item->getEmail();            // resolves to User via @extends generics
+        // Method chain through generator element
+        foreach ($this->getPens() as $pen) {
+            $pen->rename('Bold')->color();
         }
     }
 
-    public function foreachMethodReturn(): void
+    /** @return \Generator<int, Pen> */
+    public function getPens(): \Generator
     {
-        foreach ($this->getUsers() as $user) {
-            $user->getName();             // resolves via method return type → collection generics
-        }
+        yield new Pen();
     }
 
-    public function foreachProperty(): void
+    /** @return \Generator<int, Pencil, mixed, Pen> */
+    public function processPencils(): \Generator
     {
-        foreach ($this->users as $user) {
-            $user->getEmail();            // resolves via property type → collection generics
-        }
+        yield new Pencil();
     }
 
-    public function foreachVariable(): void
+    /** @return iterable<Pen> */
+    public function iterablePens(): iterable
     {
-        $collection = $this->getUsers();
-        foreach ($collection as $user) {
-            $user->getName();             // resolves via variable assignment scanning
-        }
-    }
-}
-
-// ── Type Aliases (@phpstan-type / @phpstan-import-type) ─────────────────────
-
-/**
- * @phpstan-type UserData array{name: string, email: string, age: int}
- * @phpstan-type StatusInfo array{code: int, label: string}
- */
-class TypeAliasDemo
-{
-    /** @return UserData */
-    public function getUserData(): array
-    {
-        return ['name' => 'Alice', 'email' => 'alice@example.com', 'age' => 30];
+        return [];
     }
 
-    /** @return StatusInfo */
-    public function getStatus(): array
-    {
-        return ['code' => 200, 'label' => 'OK'];
-    }
-
-    public function demo(): void
-    {
-        // Try: $this->getUserData()['   ← offers name, email, age
-        $data = $this->getUserData();
-        $data['name'];                    // resolves UserData alias → array shape keys
-
-        // Try: $this->getStatus()['     ← offers code, label
-        $status = $this->getStatus();
-        $status['label'];                 // resolves StatusInfo alias → array shape keys
-    }
-}
-
-/**
- * @phpstan-import-type UserData from TypeAliasDemo
- * @phpstan-import-type StatusInfo from TypeAliasDemo as AliasedStatus
- */
-class TypeAliasImportDemo
-{
-    /** @return UserData */
-    public function fetchUser(): array
-    {
-        return ['name' => 'Bob', 'email' => 'bob@example.com', 'age' => 25];
-    }
-
-    /** @return AliasedStatus */
-    public function fetchStatus(): array
-    {
-        return ['code' => 404, 'label' => 'Not Found'];
-    }
-
-    public function demo(): void
-    {
-        // Try: $this->fetchUser()['     ← offers name, email, age (imported from TypeAliasDemo)
-        $user = $this->fetchUser();
-        $user['email'];                   // resolves imported UserData → array shape keys
-
-        // Try: $this->fetchStatus()['   ← offers code, label (imported and renamed)
-        $status = $this->fetchStatus();
-        $status['code'];                  // resolves AliasedStatus → StatusInfo → array shape keys
-    }
-}
-
-
-// ── Named Key Destructuring from Array Shapes ───────────────────────────────
-
-class DestructuringShapeDemo
-{
     /**
-     * @return array{customer: Customer, order: Order, total: float}
+     * @param \Generator<int, Pencil> $pencils
      */
-    public function getInvoice(): array { return []; }
-
-    public function namedKeyFromMethodReturn(): void
+    public function foreachGeneratorParam(\Generator $pencils): void
     {
-        // Try: $cust->  ← offers email, address (Customer members)
-        ['customer' => $cust, 'order' => $ord] = $this->getInvoice();
-        $cust->email;                     // Customer from 'customer' key
-        $ord->total;                      // Order from 'order' key
-    }
-
-    public function namedKeyFromVariable(): void
-    {
-        /** @var array{user: User, profile: UserProfile, active: bool} $data */
-        $data = getUnknownValue();
-
-        // Try: $person->  ← offers getName(), getEmail() (User members)
-        ['user' => $person, 'profile' => $prof] = $data;
-        $person->getEmail();              // User from 'user' key
-        $prof->getDisplayName();          // UserProfile from 'profile' key
-    }
-
-    public function positionalFromShape(): void
-    {
-        /** @var array{User, Address} $pair */
-        $pair = getUnknownValue();
-
-        // Try: $second->  ← offers city, format() (Address members)
-        [$first, $second] = $pair;
-        $first->getEmail();               // User (positional index 0)
-        $second->format();                // Address (positional index 1)
-    }
-
-    public function listSyntaxNamedKey(): void
-    {
-        /** @var array{recipe: Recipe, servings: int} $meal */
-        $meal = getUnknownValue();
-
-        // Try: $r->  ← offers ingredients (Recipe members)
-        list('recipe' => $r) = $meal;
-        $r->ingredients;                  // Recipe from 'recipe' key
+        foreach ($pencils as $pencil) {
+            $pencil->sketch();            // @param overrides native \Generator type
+        }
     }
 }
 
 
-// ── Array Function Type Preservation ────────────────────────────────────────
+// ── Generator Yield Type Inference Inside Bodies ────────────────────────────
 
-class ArrayFuncDemo
+class GeneratorYieldDemo
 {
-    /** @var list<User> */
-    public array $users;
-
-    /** @return list<User> */
-    public function getUsers(): array { return []; }
-
-    public function filterPreservesType(): void
+    /** @return \Generator<int, Pen> */
+    public function findAll(): \Generator
     {
-        // Try: $active[0]->  ← offers getName(), getEmail() (User members)
-        $active = array_filter($this->users, fn(User $u) => $u->getStatus() === Status::Active);
-        $active[0]->getName();            // User preserved through array_filter
+        // yield $var infers the variable as Pen (TValue = 2nd param)
+        yield $pen;
+        $pen->write();                    // resolves to Pen
+
+        yield 0 => $anotherPen;
+        $anotherPen->color();             // key => value yields also work
     }
 
-    public function valuesPreservesType(): void
+    /** @return \Generator<int, Pen> */
+    public function yieldInsideControlFlow(): \Generator
     {
-        $vals = array_values($this->users);
-        $vals[0]->getEmail();             // User preserved through array_values
-    }
-
-    public function reversePreservesType(): void
-    {
-        $reversed = array_reverse($this->users);
-        $reversed[0]->getName();          // User preserved through array_reverse
-    }
-
-    public function slicePreservesType(): void
-    {
-        $page = array_slice($this->users, 0, 10);
-        $page[0]->getEmail();             // User preserved through array_slice
-    }
-
-    public function popExtractsElement(): void
-    {
-        // Try: $last->  ← offers getName(), getEmail() (User members)
-        $users = $this->getUsers();
-        $last = array_pop($users);
-        $last->getName();                 // single User from array_pop
-
-        $first = array_shift($users);
-        $first->getEmail();               // single User from array_shift
-    }
-
-    public function currentEndReset(): void
-    {
-        $cur = current($this->users);
-        $cur->getName();                  // User from current()
-
-        $last = end($this->users);
-        $last->getEmail();                // User from end()
-
-        end($this->users)->getName();     // inline end() without variable
-        current($this->users)->getEmail();// inline current() without variable
-    }
-
-    public function foreachOverFiltered(): void
-    {
-        // Try: $u->  ← offers getName(), getEmail() (User members)
-        foreach (array_filter($this->users, fn(User $u) => true) as $u) {
-            $u->getEmail();               // User preserved in foreach
+        if (true) {
+            yield $pen;
+            $pen->write();                // resolves inside control flow blocks
         }
     }
 
-    public function arrayMapFallback(): void
+    /** @return \Generator<int, Pen> */
+    public function chainingThroughYieldInferred(): \Generator
     {
-        // When callback has no return type, falls back to input element type
-        $mapped = array_map(fn($u) => $u, $this->users);
-        $mapped[0]->getName();            // User from array_map fallback
+        yield $pen;
+        $pen->rename('Bold')->color();    // chains through inferred type
+    }
+
+    /** @return \Generator<int, string, Pencil, void> */
+    public function coroutine(): \Generator
+    {
+        // TSend inference: $var = yield assigns the 3rd type param
+        $pencil = yield 'ready';
+        $pencil->sketch();                // resolves to Pencil (TSend)
+    }
+
+    /** @return \Generator<int, string, Pencil, void> */
+    public function tsendInsideNestedBlocks(): \Generator
+    {
+        while (true) {
+            if (true) {
+                $pencil = yield 'waiting';
+                $pencil->sketch();        // resolves inside nested blocks
+            }
+        }
+    }
+}
+
+
+// ── Template Parameter Bounds ───────────────────────────────────────────────
+
+/**
+ * @template-covariant TNode of AstNode
+ */
+class TemplateBoundsDemo
+{
+    public function demo(): void
+    {
+        $this->node->getChildren();       // resolves via TNode's bound: AstNode
+        $this->node->getParent();
+    }
+
+    /** @var TNode */
+    public $node;
+
+    /** @param TNode $node */
+    public function __construct(AstNode $node)
+    {
+        $this->node = $node;
+    }
+}
+
+
+// ── Match Class-String Forwarding to Conditional Return Types ───────────────
+
+class MatchClassStringDemo
+{
+    public function demo(): void
+    {
+        $container = new Container();
+
+        // Match expression → class-string → conditional return
+        $requestType = match (rand(0, 1)) {
+            0 => ElasticProductReviewIndexService::class,
+            1 => ElasticBrandIndexService::class,
+        };
+        $requestBody = $container->make($requestType);
+        $requestBody->index();            // on both classes
+        $requestBody->reindex();          // ElasticProductReviewIndexService only
+
+        // Standalone function with @template
+        $resolved = resolve($requestType);
+        $resolved->index();               // on both classes
+
+        // Inline chain
+        $container->make($requestType)->index();
+
+        // Simple class-string variable
+        $cls = Pen::class;
+        $pen = $container->make($cls);
+        $pen->write();                    // resolves through simple $cls variable
+
+        // Ternary class-string
+        $ternary = rand(0, 1) ? Pen::class : Pencil::class;
+        $obj = $container->make($ternary);
+        $obj->label();                    // shared by both types
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  LARAVEL — Eloquent features that other editors struggle with
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ── Eloquent Virtual Members (Full Suite) ───────────────────────────────────
+
+class EloquentVirtualMemberDemo
+{
+    public function demo(): void
+    {
+        $author = new BlogAuthor();
+
+        // Column name properties ($fillable / $guarded / $hidden → mixed)
+        $author->name;
+        $author->password;
+
+        // $casts — built-in types, enum, custom cast class
+        $author->is_admin;                // → bool
+        $author->created_at;              // → \Carbon\Carbon
+        $author->options;                 // → array
+        $author->status;                  // → OrderStatus (enum)
+        $author->description->toHtml();   // → HtmlString (custom cast)
+
+        // casts() method — overrides / extends $casts
+        $author->verified_at;             // → \Carbon\Carbon
+
+        // $attributes defaults — types from literal values
+        $author->role;                    // → string
+        $author->is_active;               // → bool
+        $author->login_count;             // → int
+        $author->rating;                  // → float
+
+        // Relationship properties
+        $author->posts;                   // → Collection<BlogPost>
+        $author->profile;                 // → AuthorProfile
+        $author->profile->getBio();       // chains through
+        $author->tags;                    // → Collection<BlogTag>
+        $author->commentable;             // body-inferred morphTo → Model
+
+        // Scope methods (instance and static)
+        $author->active();
+        $author->ofGenre('fiction');
+        BlogAuthor::active();
+        BlogAuthor::ofGenre('fiction');
+
+        // Accessors
+        $author->display_name;            // virtual property → string
+        $author->avatar_url;              // modern: Attribute → mixed
+
+        // Builder-as-static forwarding
+        BlogAuthor::where('active', true);
+        BlogAuthor::where('active', 1)->get();     // returns Collection<BlogAuthor>
+        BlogAuthor::where('active', 1)->first();   // returns BlogAuthor|null
+        BlogAuthor::orderBy('name')->limit(10)->get(); // full chain resolution
+        BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get();
+        BlogAuthor::where('active', 1)->first()->profile->getBio();
+
+        // Scopes on Builder instances
+        BlogAuthor::where('active', 1)->active()->ofGenre('sci-fi')->get();
+        $query = BlogAuthor::where('genre', 'fiction');
+        $query->active();
+        $query->orderBy('name')->get();
+    }
+}
+
+
+// ── Custom Eloquent Collections ─────────────────────────────────────────────
+
+class CustomCollectionDemo
+{
+    public function demo(): void
+    {
+        // Builder chain → custom collection via #[CollectedBy]
+        $reviews = Review::where('published', true)->get();
+        $reviews->topRated();             // custom method from ReviewCollection
+        $reviews->averageRating();        // custom method from ReviewCollection
+        $reviews->first();                // inherited — returns Review|null
+
+        // Relationship properties also use the custom collection
+        $review = new Review();
+        $review->replies->topRated();     // HasMany<Review> → ReviewCollection
+    }
+}
+
+
+// ── Closure Parameter Inference ─────────────────────────────────────────────
+
+class ClosureParamInferenceDemo
+{
+    public function demo(): void
+    {
+        $src = new ScaffoldingClosureParamInference();
+
+        // $p is inferred as Pen from map's callable(TValue, TKey) signature
+        $src->items->map(fn($p) => $p->write());
+
+        // Closure body
+        $src->items->each(function ($pen) {
+            $pen->write();                // resolves to Pen
+        });
+
+        // Explicit type hint takes precedence over inference
+        $src->items->map(fn(Pencil $p) => $p->sketch());
+
+        // Eloquent chunk — $orders inferred as Collection
+        \App\Models\BlogAuthor::where('active', true)->chunk(100, function ($orders) {
+            $orders->count();             // resolves to Eloquent Collection
+        });
+
+        // Eloquent whereHas — $query inferred as Builder
+        \App\Models\BlogAuthor::whereHas('posts', function ($query) {
+            $query->where('published', true); // resolves to Builder
+        });
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TRIVIAL — works in most editors, included for completeness
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ── Static & Enum Completion ────────────────────────────────────────────────
+
+class StaticEnumDemo
+{
+    public function demo(): void
+    {
+        User::$defaultRole;          // static property
+        User::TYPE_ADMIN;            // class constant
+        User::findByEmail('a@b.c');  // static method
+        User::make('Bob');           // inherited static (Model)
+        User::query();               // @mixin Builder (Model)
+
+        Status::Active;              // backed enum case
+        Status::Active->label();     // enum method
+        Priority::High;              // int-backed enum
+        Mode::Manual;                // unit enum
+    }
+}
+
+
+// ── Signature Help ──────────────────────────────────────────────────────────
+
+class SignatureHelpDemo
+{
+    public function demo(): void
+    {
+        // Place cursor inside parentheses to see parameter hints.
+        // The active parameter updates as you type commas.
+        $user = new User('Alice', 'alice@example.com');
+        createUser('Alice', 'alice@example.com');  // standalone function
+        $user->setStatus(Status::Active);          // instance method
+        User::findByEmail('alice@example.com');    // static method
+        new User('Bob', 'bob@example.com');        // constructor
+    }
+}
+
+
+// ── Callable Snippet Insertion ──────────────────────────────────────────────
+
+class SnippetInsertionDemo
+{
+    public function demo(): void
+    {
+        // Completion inserts snippets with tab-stops for required params
+        $user = new User('Alice', 'alice@example.com');
+        $user->setName('Bob');                    // → setName(${1:$name})
+        $user->toArray();                         // → toArray()  (no params)
+        $user->addRoles();                        // → addRoles() (variadic — no tab-stops)
+        User::findByEmail('a@b.c');               // → findByEmail(${1:$email})
+        $response = new Response(200);            // → Response(${1:$statusCode})
+    }
+}
+
+
+// ── Go-to-Definition ────────────────────────────────────────────────────────
+// All jump targets are defined right below this demo so Ctrl+Click lands
+// within a few lines, making it easy to verify the feature works.
+
+class GtdParent
+{
+    public const string ORIGIN = 'base';
+}
+
+class GtdTarget extends GtdParent
+{
+    public static string $defaultTag = 'none';
+    public const string KIND = 'target';
+
+    public function locate(): string { return 'found'; }
+}
+
+function gtdHelper(): GtdTarget { return new GtdTarget(); }
+
+class GoToDefinitionDemo
+{
+    public function demo(): void
+    {
+        // Ctrl+Click on any symbol to jump to its definition
+        $target = new GtdTarget();
+        $target->locate();                        // Ctrl+Click → jumps to GtdTarget::locate()
+        GtdTarget::KIND;                          // Ctrl+Click → jumps to class constant
+        GtdParent::ORIGIN;                        // Ctrl+Click → jumps to inherited constant
+        GtdTarget::$defaultTag;                   // Ctrl+Click → jumps to static property
+
+        $helper = gtdHelper();
+        echo $helper;                             // Ctrl+Click on $helper → jumps to assignment
+
+        define('APP_VERSION', '1.0.0');
+        echo APP_VERSION;                         // Ctrl+Click → jumps to define()
+    }
+}
+
+
+// ── Type Hint Go-to-Definition ──────────────────────────────────────────────
+// Ctrl+Click on class names in type hints, return types, catch blocks,
+// and docblock annotations to jump to their definitions.
+// All referenced types are defined right here so the jump is short.
+
+class GtdAlpha
+{
+    public function act(): void {}
+}
+
+class GtdBeta
+{
+    public function act(): void {}
+}
+
+interface GtdShape
+{
+    public function area(): float;
+}
+
+interface GtdColor
+{
+    public function rgb(): string;
+}
+
+class GtdResult
+{
+    public function ok(): bool { return true; }
+}
+
+class GtdNotFoundException extends \RuntimeException {}
+class GtdAccessException extends \RuntimeException {}
+
+class TypeHintGtdDemo
+{
+    public function demo(): void
+    {
+        // Catch block exception types — Ctrl+Click GtdNotFoundException or GtdAccessException
+        try {
+            $this->paramTypes(new GtdAlpha());
+        } catch (GtdNotFoundException|GtdAccessException $e) {}
+    }
+
+    public function paramTypes(GtdAlpha $item): void {}                    // Ctrl+Click GtdAlpha
+    public function unionTypes(GtdAlpha|GtdBeta $item): void {}            // Ctrl+Click either
+    public function intersectionTypes(GtdShape&GtdColor $item): void {}    // Ctrl+Click either
+    public function returnType(): GtdResult { return new GtdResult(); }    // Ctrl+Click GtdResult
+
+    /**
+     * @param list<GtdAlpha> $items                Ctrl+Click GtdAlpha
+     * @return GtdResult                           Ctrl+Click GtdResult
+     * @throws GtdNotFoundException                Ctrl+Click GtdNotFoundException
+     */
+    public function docblockTypes($items) { return new GtdResult(); }
+}
+
+
+// ── Go-to-Implementation ────────────────────────────────────────────────────
+// All implementors are defined right here so "Go to Implementations"
+// lands within a few lines of the demo.
+
+interface GtdRenderable
+{
+    public function render(): string;
+}
+
+class GtdHtmlRenderer implements GtdRenderable
+{
+    public function render(): string { return '<html>'; }
+}
+
+class GtdJsonRenderer implements GtdRenderable
+{
+    public function render(): string { return '{}'; }
+}
+
+class GoToImplementationDemo
+{
+    // Right-click → "Go to Implementations" on GtdRenderable
+    // to jump to GtdHtmlRenderer and GtdJsonRenderer above.
+    // Try: Go-to-Implementation on "render" → render() in each implementor
+    public function demo(GtdRenderable $renderer): string
+    {
+        return $renderer->render();
+    }
+}
+
+
+// ── Context-Aware Class Name Filtering ──────────────────────────────────────
+// Try: erase the class name after each keyword and re-type a prefix.
+//   extends (class)     → non-final classes only
+//   extends (interface) → interfaces only
+//   implements          → interfaces only
+//   use (inside class)  → traits only
+//   instanceof          → classes, interfaces, enums (no traits)
+//   new                 → concrete non-abstract classes only
+
+class ClassFilteringDemo extends Model implements Renderable
+{
+    use HasTimestamps;
+    public function test(): bool { return $this instanceof User; }
+    public function format(string $template): string { return ''; }
+    public function toArray(): array { return []; }
+}
+
+
+// ── Type Hint Completion in Definitions ─────────────────────────────────────
+// Try: trigger completion when typing a type hint — PHP scalars (string,
+// int, float, bool) appear alongside class names, with no constants or
+// functions in the list.
+
+function typeHintDemo(User $user, string $name): User { return $user; }
+
+function unionDemo(string|int $value, ?User $maybe): User|null { return $maybe; }
+
+
+// ── Auto-Import ─────────────────────────────────────────────────────────────
+// Try: type `new DateT` and accept `DateTime`. The `use DateTime;` statement
+// is inserted between `use Exception;` and `use Stringable;` above to
+// maintain alphabetical order.
+//
+// The `use Exception;` import above occupies the short name "Exception".
+// Try: type `throw new pq\Exception()` and accept — the auto-import inserts
+// `\pq\Exception` at the usage site instead of a conflicting `use` statement.
+
+// ── Namespace Segment Completion ────────────────────────────────────────────
+// Try: erase the class name after `use Demo\` and trigger completion to see
+// namespace segments (module/folder icon) alongside class names.
+
+// ── Namespaced Function Completion ──────────────────────────────────────────
+// Try: type `use function parse_file` and accept to get
+// `use function ast\parse_file;`
+
+// ── $_SERVER Superglobal ────────────────────────────────────────────────────
+
+class ServerSuperglobalDemo
+{
+    public function demo(): void
+    {
+        $_SERVER[''];   // Try: key completion for REQUEST_METHOD, HTTP_HOST, etc.
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ADVANCED — specialized features
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ── Intersection Types ──────────────────────────────────────────────────────
+
+class IntersectionDemo
+{
+    public function demo(Envelope&Printable $item): void
+    {
+        $item->print();                       // from Printable
+        $item->seal();                        // from Envelope
+    }
+}
+
+
+// ── Ternary Narrowing ──────────────────────────────────────────────────────
+
+class TernaryNarrowingDemo
+{
+    public function demo(): void
+    {
+        $thing = pickRockOrBanana();
+        $label = $thing instanceof Rock ? $thing->crush() : $thing->peel();
+    }
+}
+
+
+// ── Class Alias ─────────────────────────────────────────────────────────────
+
+class ClassAliasDemo
+{
+    public function demo(): void
+    {
+        $profile = new Profile(new User('Eve', 'eve@example.com'));
+        $profile->getDisplayName();               // Profile → UserProfile via `use ... as`
+    }
+}
+
+
+// ── self::class / static::class ─────────────────────────────────────────────
+
+class SelfClassDemo
+{
+    public function demo(): string
+    {
+        return self::class;          // resolves to SelfClassDemo
     }
 }
 
 
 // ── Trait insteadof / as Conflict Resolution ────────────────────────────────
 
-/**
- * Demonstrates trait conflict resolution with `insteadof` and `as`.
- *
- * When multiple traits define the same method, PHP requires explicit
- * `insteadof` to pick a winner and `as` to create aliases.
- */
 class TraitConflictDemo
 {
     use JsonSerializer, XmlSerializer {
@@ -1715,97 +1518,61 @@ class TraitConflictDemo
 
     public function demo(): void
     {
-        // Try: $this->  — offers serialize (from JsonSerializer), serializeXml (alias),
-        //                  internalSerialize (alias), toJson, toXml, and demo
         $this->serialize();               // JsonSerializer wins via insteadof
         $this->serializeXml();            // XmlSerializer::serialize aliased
-        $this->internalSerialize();       // JsonSerializer::serialize aliased as private
-        $this->toJson();                  // non-conflicting method from JsonSerializer
-        $this->toXml();                   // non-conflicting method from XmlSerializer
+        $this->internalSerialize();       // aliased as private
+        $this->toJson();                  // non-conflicting from JsonSerializer
+        $this->toXml();                   // non-conflicting from XmlSerializer
     }
 }
 
 
-
 // ── unset() Tracking ────────────────────────────────────────────────────────
 
-/**
- * Demonstrates that `unset($var)` removes the variable from scope.
- *
- * After `unset($x)`, completion on `$x->` should produce no results.
- * Re-assigning the variable restores its type.
- */
 class UnsetDemo
 {
-    public function basicUnset(): void
+    public function demo(): void
     {
-        $user = new User('Alice', 'alice@example.com');
-        $user->getEmail();                // resolves to User
-        unset($user);
-        //$user->
-        // Try: $user->  — no completions (variable was unset)
-    }
+        $pen = new Pen('blue');
+        $pen->write();                    // resolves to Pen
+        unset($pen);
+        // Try: $pen->  — no completions (variable was unset)
 
-    public function reassignAfterUnset(): void
-    {
-        $item = new User('Bob', 'bob@example.com');
-        unset($item);
-        $item = new AdminUser('Admin', 'admin@example.com');
-        $item->grantPermission('edit');   // resolves to AdminUser
-    }
+        // Re-assigning after unset restores type
+        $tool = new Pen('red');
+        unset($tool);
+        $tool = new Marker();
+        $tool->highlight();               // resolves to Marker
 
-    public function unsetMultiple(): void
-    {
-        $user = new User('A', 'a@b.com');
-        $profile = new UserProfile($user);
-        unset($user, $profile);
-        // Try: $user->   — no completions
-        // Try: $profile-> — no completions
-    }
-
-    public function unsetOnlyAffectsTarget(): void
-    {
-        $user = new User('A', 'a@b.com');
-        $profile = new UserProfile($user);
-        unset($user);
-        $profile->getDisplayName();       // still resolves to UserProfile
+        // unset only affects targeted variable
+        $pen2 = new Pen('green');
+        $pencil = new Pencil();
+        unset($pen2);
+        $pencil->sketch();                // still resolves to Pencil
     }
 }
 
 
 // ── First-Class Callable Syntax (PHP 8.1) ───────────────────────────────────
 
-/**
- * PHP 8.1 first-class callable syntax creates a Closure from any
- * function or method reference.  The return type of the underlying
- * callable is resolved so that invoking the Closure gives completion
- * on the result.
- */
 class FirstClassCallableDemo
 {
-    public function makeOrder(): Response
-    {
-        return new Response(200);
-    }
-
     public function demo(): void
     {
-        // Function reference: createUser(...) → Closure that returns User
-        $fn = createUser(...);
-        $fn()->getEmail();                // resolves to User
+        $src = new ScaffoldingFirstClassCallable();
 
-        // Instance method: $this->makeOrder(...) → Closure returning Response
-        $orderFn = $this->makeOrder(...);
-        $orderFn()->getStatusCode();      // resolves to Response
+        $fn = makePen(...);
+        $fn()->write();                   // function reference → Closure returning Pen
 
-        // Static method returning ?self: User::findByEmail(...)
-        $finder = User::findByEmail(...);
-        $finder()->getName();             // resolves to User
+        $orderFn = $src->dispatch(...);
+        $orderFn()->write();              // instance method → Closure returning Pen
 
-        // Assigned result
-        $make = createUser(...);
-        $user = $make();
-        $user->getProfile();              // resolves to User
+        $finder = Pen::make(...);
+        $finder()->color();               // static method → Closure returning Pen
+
+        $make = makePen(...);
+        $pen = $make();
+        $pen->color();                    // assigned result from callable invocation
     }
 }
 
@@ -1814,74 +1581,39 @@ class FirstClassCallableDemo
 
 class ArrayAccessDemo
 {
-    /** @return User[] */
-    public function getUsers(): array { return []; }
-
-    public function singleLine(): void
+    public function demo(): void
     {
-        $users = $this->getUsers();
-        $users[0]->getName();             // resolves to User
-    }
+        $src = new ScaffoldingArrayAccess();
 
-    public function multiLineChain(): void
-    {
-        $gifts = (new GiftShop())
-            ->getGifts();
+        $pens = $src->fetchAll();         // Pen[] from method return
+        $pens[0]->write();                // resolves to Pen
+
+        $gifts = (new ScaffoldingGenericContext())
+            ->display();
         $gifts[0]->open();                // resolves to Gift (element of Gift[])
-    }
 
-    public function intermediateVariable(): void
-    {
-        $users = $this->getUsers();
-        $first = $users[0];
-        $first->getEmail();               // resolves to User via $first = $users[0]
+        $first = $pens[0];
+        $first->color();                  // resolves via $first = $pens[0]
     }
 }
 
 
-// ── Closure Parameter Inference ─────────────────────────────────────────────
+// ── Closure / Arrow-Function Members ────────────────────────────────────────
 
-class ClosureParamInferenceDemo
+class ClosureMembersDemo
 {
-    /** @var FluentCollection<int, User> */
-    public FluentCollection $users;
-
-    public function mapArrowFunction(): void
+    public function demo(): void
     {
-        // $u is inferred as User from map's callable(TValue, TKey) signature.
-        $this->users->map(fn($u) => $u->getEmail());
-    }
+        $typedClosure = function(Pen $p): string { return $p->write(); };
+        $typedClosure->bindTo($this);     // resolves to Closure::bindTo
+        $typedClosure->call($this);       // resolves to Closure::call
 
-    public function eachClosure(): void
-    {
-        // $user is inferred as User from each's callable(TValue, TKey) signature.
-        $this->users->each(function ($user) {
-            $user->getEmail();            // resolves to User
-        });
-    }
+        $typedArrow = fn(int $x): float => $x * 1.5;
+        $typedArrow->bindTo($this);       // resolves to Closure::bindTo
 
-    public function explicitTypeWins(): void
-    {
-        // Explicit type hint takes precedence over inference.
-        $this->users->map(fn(Order $o) => $o->customer);
-    }
-
-    public function chunkInference(): void
-    {
-        // $orders is inferred as Collection from chunk's
-        // callable(Collection<int, TModel>, int) signature.
-        \App\Models\BlogAuthor::where('active', true)->chunk(100, function ($orders) {
-            $orders->count();             // resolves to Eloquent Collection
-        });
-    }
-
-    public function whereHasInference(): void
-    {
-        // $q is inferred as Builder from whereHas's
-        // Closure(Builder<TModel>): mixed signature.
-        \App\Models\BlogAuthor::whereHas('posts', function ($q) {
-            $q->where('published', true); // resolves to Builder
-        });
+        $fn = function(): void {};
+        $bound = $fn->bindTo($this);
+        $bound->call($this);             // chained: $bound is still Closure
     }
 }
 
@@ -1889,8 +1621,162 @@ class ClosureParamInferenceDemo
 // ═══════════════════════════════════════════════════════════════════════════
 // ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 // ┃  SCAFFOLDING — Supporting definitions below this line.              ┃
-// ┃  Everything below exists to support the playground above.           ┃
+// ┃  Everything below exists to support the demos above.               ┃
 // ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+//
+// Keep shared classes NARROW (2-4 members). The whole point of the demos
+// is that a human can glance at the completion list and immediately tell
+// whether the right type resolved. A 15-member class defeats that because
+// the expected item could be buried on page two.
+//
+// If a demo needs a richer object, create a NEW class in a demo-specific
+// section instead of expanding a shared one. Every member you add to a
+// shared class leaks into every demo that uses it.
+
+
+// ── Demo-Specific Scaffolding ───────────────────────────────────────────────
+
+/**
+ * @property string $gorilla
+ * @method bool hyena(string $x)
+ */
+class Zoo extends ZooBase implements ZooContract
+{
+    use ZooTraitA;
+    use ZooTraitB;
+
+    public string $baboon = '';
+    protected string $keeper = 'hidden';      // trip wire — must NOT appear on $zoo->
+    private string $ceo = 'invisible';        // trip wire — must NOT appear on $zoo->
+
+    public function aardvark(): void {}
+    private function nocturnal(): void {}     // trip wire — must NOT appear on $zoo->
+
+    public function __construct(
+        public int $buffalo = 0,
+    ) {
+        parent::__construct();
+    }
+}
+
+abstract class ZooBase
+{
+    public function __construct(
+        public readonly string $cheetah = '',
+    ) {}
+
+    public function falcon(): string { return ''; }
+}
+
+trait ZooTraitA
+{
+    public function dingo(): void {}
+}
+
+trait ZooTraitB
+{
+    public function elephant(string $value): string { return $value; }
+}
+
+/**
+ * @property-read string $iguana
+ * @method string jaguar()
+ */
+interface ZooContract {}
+
+class ScaffoldingChainingDemo
+{
+    public Brush $brush;
+    public Canvas $canvas;
+
+    public function __construct()
+    {
+        $this->brush = new Brush();
+        $this->canvas = new Canvas();
+    }
+}
+
+class ScaffoldingExpressionType
+{
+    public ?Container $backup;
+    public Response $primary;
+
+    public function __construct()
+    {
+        $this->backup = new Container();
+        $this->primary = new Response(200);
+    }
+}
+
+class ScaffoldingCollectionForeach
+{
+    public UserEloquentCollection $members;
+
+    public function allMembers(): UserEloquentCollection
+    {
+        return new UserEloquentCollection();
+    }
+}
+
+class ScaffoldingGenericContext
+{
+    /** @var Box<Gift> */
+    public $chest;
+
+    /** @return TypedCollection<int, Gift> */
+    public function display(): TypedCollection { return new TypedCollection(); }
+}
+
+class ScaffoldingIteration
+{
+    /** @var list<Pen> */
+    public array $batch;
+
+    /** @return list<Pen> */
+    public function allPens(): array { return []; }
+
+    /** @return array<Pen, Pencil> */
+    public function crossRef(): array { return []; }
+}
+
+class ScaffoldingArrayFunc
+{
+    /** @var list<Pen> */
+    public array $members;
+
+    /** @return list<Pen> */
+    public function roster(): array { return []; }
+}
+
+class ScaffoldingException
+{
+    protected function lookup(int $id): ?array { return null; }
+    protected function riskyOperation(): void {}
+
+    /** @throws \Exception */
+    protected function throwsException(): void { throw new \Exception('error'); }
+}
+
+class ScaffoldingClosureParamInference
+{
+    /** @var FluentCollection<int, Pen> */
+    public FluentCollection $items;
+}
+
+class ScaffoldingFirstClassCallable
+{
+    public function dispatch(): Pen
+    {
+        return new Pen();
+    }
+}
+
+class ScaffoldingArrayAccess
+{
+    /** @return Pen[] */
+    public function fetchAll(): array { return []; }
+}
+
 
 // ── AST Node (template bounds demo) ────────────────────────────────────────
 
@@ -1930,7 +1816,6 @@ class ObjectMapper
         return $item;
     }
 }
-// ═══════════════════════════════════════════════════════════════════════════
 
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
@@ -1942,24 +1827,6 @@ class ObjectMapper
 interface Renderable extends Stringable
 {
     public function format(string $template): string;
-}
-
-interface Loggable
-{
-    public function log(string $message): void;
-}
-
-class HtmlReport implements Renderable
-{
-    public function format(string $template): string
-    {
-        return '<div>' . $template . '</div>';
-    }
-
-    public function __toString(): string
-    {
-        return $this->format('report');
-    }
 }
 
 // ─── Traits ─────────────────────────────────────────────────────────────────
@@ -2130,6 +1997,7 @@ abstract class Model
     }
 }
 
+
 // ─── Concrete Classes ───────────────────────────────────────────────────────
 
 /**
@@ -2249,13 +2117,13 @@ final class AdminUser extends User
 
     public function __construct(string $name, string $email)
     {
-        parent::__construct($name, $email); // parent:: shows inherited methods
+        parent::__construct($name, $email);
     }
 
     public function toArray(): array
     {
-        $base = parent::toArray();          // parent:: resolves overridden method
-        $base['connection'] = parent::CONNECTION; // parent:: resolves inherited constant
+        $base = parent::toArray();
+        $base['connection'] = parent::CONNECTION;
         $base['permissions'] = $this->permissions;
         return $base;
     }
@@ -2318,16 +2186,10 @@ class Repository
     }
 }
 
-/** @extends Repository<User> */
-class UserRepository extends Repository
-{
-    public function findByEmail(string $email): ?User
-    {
-        return null;
-    }
-}
+/** @extends Repository<Pen> */
+class PenRepository extends Repository {}
 
-class CachingUserRepository extends UserRepository
+class CachingPenRepository extends PenRepository
 {
     public function clearCache(): void {}
 }
@@ -2357,10 +2219,10 @@ class TypedCollection
     public function all(): array { return $this->items; }
 }
 
-/** @extends TypedCollection<int, User> */
-class UserCollection extends TypedCollection
+/** @extends TypedCollection<int, Pen> */
+class PenCollection extends TypedCollection
 {
-    public function adminsOnly(): self
+    public function thickOnly(): self
     {
         return $this;
     }
@@ -2448,20 +2310,103 @@ class Gift
     public function getTag(): string { return 'birthday'; }
 }
 
-class Immutable
+// ─── Narrowing Demo Support Classes ─────────────────────────────────────────
+
+class Rock
 {
-    public function __construct(private int $value) {}
+    public function crush(): string { return 'smash!'; }
+    public function weigh(): float { return 5.0; }
+}
 
-    public function getValue(): int
-    {
-        return $this->value;
-    }
+class Banana
+{
+    public function peel(): string { return 'yum!'; }
+    public function weigh(): float { return 0.2; }
+}
 
-    public function withValue(int $v): self
-    {
-        $clone = clone $this;
-        return $clone;
-    }
+// ─── Ambiguous Variable Support Classes ─────────────────────────────────────
+
+class Lamp
+{
+    public function dim(): void {}
+    public function turnOff(): void {}
+}
+
+class Faucet
+{
+    public function drip(): void {}
+    public function turnOff(): void {}
+}
+
+// ─── Intersection Demo Support Classes ──────────────────────────────────────
+
+interface Printable
+{
+    public function print(): void;
+}
+
+class Envelope
+{
+    public function seal(): void {}
+}
+
+// ─── Shared Narrow Classes ──────────────────────────────────────────────────
+// These are small, purpose-built classes for demos. Keep them narrow (2-4
+// members each). If a demo needs a richer object, create a new class in a
+// demo-specific section below instead of expanding these.
+
+class Pen
+{
+    public function __construct(public string $ink = 'black') {}
+    public function write(): string { return ''; }
+    public function color(): string { return $this->ink; }
+    public function label(): string { return 'pen'; }
+    /** @return static */
+    public function rename(string $name): static { return $this; }
+    /** @return static */
+    public static function make(): static { return new static(); }
+    private function refill(): void {}            // trip wire — must NOT appear on external $pen->
+}
+
+class Pencil
+{
+    public function sketch(): string { return ''; }
+    public function sharpen(): void {}
+    public function label(): string { return 'pencil'; }
+}
+
+class Marker extends Pen
+{
+    public function highlight(): void {}
+}
+
+// ─── Chaining Demo Support Classes ──────────────────────────────────────────
+
+class Brush
+{
+    public function setSize(string $size): static { return $this; }
+    public function setStyle(string $style): static { return $this; }
+    public function stroke(): string { return ''; }
+    public function getCanvas(): Canvas { return new Canvas(); }
+    protected function calibrate(): void {}       // trip wire — must NOT appear on $studio->brush->
+
+    /** @deprecated */
+    public static function find(int $id): ?static { return null; }
+}
+
+class Canvas
+{
+    public Easel $easel;
+
+    public function __construct() { $this->easel = new Easel(); }
+    public function getBrush(): Brush { return new Brush(); }
+    public function title(): string { return ''; }
+}
+
+class Easel
+{
+    public string $material = 'wood';
+    public function height(): string { return '150cm'; }
 }
 
 // ─── Expression Type Support Classes ────────────────────────────────────────
@@ -2478,43 +2423,7 @@ class ElasticBrandIndexService
     public function bulkDelete(array $ids): void {}
 }
 
-// ─── Property Chain Support Classes ─────────────────────────────────────────
-
-class Address
-{
-    public string $city = '';
-    public string $zip = '';
-    public string $country = '';
-
-    public function format(): string
-    {
-        return "{$this->city}, {$this->zip}, {$this->country}";
-    }
-}
-
-class Customer
-{
-    public Address $address;
-    public string $email;
-
-    public function __construct(string $email, Address $address)
-    {
-        $this->email = $email;
-        $this->address = $address;
-    }
-}
-
-class Order
-{
-    public Customer $customer;
-    public float $total;
-
-    public function __construct(Customer $customer, float $total)
-    {
-        $this->customer = $customer;
-        $this->total = $total;
-    }
-}
+// ─── Param Override Support Classes ─────────────────────────────────────────
 
 class Ingredient
 {
@@ -2538,23 +2447,6 @@ class Recipe
     ) {}
 }
 
-// ─── Foreach Key Type Support Classes ───────────────────────────────────────
-
-class Request
-{
-    public string $method = 'GET';
-    public string $path = '/';
-
-    public function getUri(): string { return $this->path; }
-}
-
-class HttpResponse
-{
-    public int $statusCode = 200;
-
-    public function getBody(): string { return ''; }
-}
-
 // ─── Trait Generic Support Classes ──────────────────────────────────────────
 
 class UserFactory
@@ -2573,8 +2465,8 @@ class Product
     public function getPrice(): float { return 0.0; }
 }
 
-/** @use Indexable<int, User> */
-class UserIndex
+/** @use Indexable<int, Pen> */
+class PenIndex
 {
     use Indexable;
 }
@@ -2606,9 +2498,14 @@ function createUser(string $name, string $email): User
     return new User($name, $email);
 }
 
-function findOrFail(int $id): User|AdminUser
+function makePen(): Pen
 {
-    return new User('test', 'test@example.com');
+    return new Pen();
+}
+
+function pickPenOrPencil(): Pen|Pencil
+{
+    return new Pen();
 }
 
 function getUnknownValue(): mixed
@@ -2627,28 +2524,33 @@ function resolve(string $class): object
 }
 
 /**
- * @return array{logger: User, debug: bool}
+ * @return array{logger: Pen, debug: bool}
  */
 function getAppConfig(): array { return []; }
 
-/** @phpstan-assert User $value */
-function assertUser(mixed $value): void
+function pickRockOrBanana(): Rock|Banana
 {
-    if (!$value instanceof User) {
-        throw new \InvalidArgumentException('Expected User');
+    return new Rock();
+}
+
+/** @phpstan-assert Rock $value */
+function assertRock(mixed $value): void
+{
+    if (!$value instanceof Rock) {
+        throw new \InvalidArgumentException('Expected Rock');
     }
 }
 
-/** @phpstan-assert-if-true AdminUser $value */
-function isAdmin(mixed $value): bool
+/** @phpstan-assert-if-true Rock $value */
+function isRock(mixed $value): bool
 {
-    return $value instanceof AdminUser;
+    return $value instanceof Rock;
 }
 
-/** @phpstan-assert-if-false AdminUser $value */
-function isRegularUser(mixed $value): bool
+/** @phpstan-assert-if-false Rock $value */
+function isBanana(mixed $value): bool
 {
-    return !$value instanceof AdminUser;
+    return !$value instanceof Rock;
 }
 
 // ─── Multi-line @return & Broken Docblock Recovery ──────────────────────────
@@ -2660,9 +2562,6 @@ function isRegularUser(mixed $value): bool
 class FluentCollection
 {
     /**
-     * Multi-line @return with conditionals inside generics.
-     * The lines are joined and the full type is parsed.
-     *
      * @template TGroupKey of array-key
      *
      * @param  (callable(TValue, TKey): TGroupKey)|array|string  $groupBy
@@ -2679,8 +2578,6 @@ class FluentCollection
     }
 
     /**
-     * Single-line @return — works as before.
-     *
      * @template TMapValue
      *
      * @param  callable(TValue, TKey): TMapValue  $callback
@@ -2699,8 +2596,6 @@ class FluentCollection
     }
 
     /**
-     * Multi-line @return with nested generics spanning lines.
-     *
      * @return array<
      *   string,
      *   FluentCollection<int, TValue>
@@ -2770,10 +2665,6 @@ final class UserEloquentCollection extends EloquentCollection {}
 
 class BlogAuthor extends \Illuminate\Database\Eloquent\Model
 {
-    // ── Column Name Arrays ──────────────────────────────────────────────────
-    // $fillable, $guarded, and $hidden list column names. Each string
-    // produces a mixed-typed virtual property as a last-resort fallback.
-    // Columns covered by $casts or $attributes are superseded by those.
     protected $fillable = [
         'name',
         'email',
@@ -2789,11 +2680,6 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         'remember_token',
     ];
 
-    // ── Casts ───────────────────────────────────────────────────────────────
-    // Cast type strings are mapped to PHP types: 'datetime' → Carbon,
-    // 'boolean' → bool, 'array' → array, 'decimal:N' → float, etc.
-    // Enum casts resolve to the enum class. Custom cast classes resolve
-    // their type from the get() return type.
     protected $casts = [
         'is_admin' => 'boolean',
         'created_at' => 'datetime',
@@ -2804,7 +2690,6 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         'description' => HtmlCast::class,
     ];
 
-    // casts() method — entries here override $casts for the same column
     protected function casts(): array
     {
         return [
@@ -2812,9 +2697,6 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         ];
     }
 
-    // ── Attribute Defaults ──────────────────────────────────────────────────
-    // Types are inferred from the literal values. Columns already in $casts
-    // are skipped (casts take priority).
     protected $attributes = [
         'role' => 'user',
         'is_active' => true,
@@ -2824,7 +2706,6 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         'is_admin' => 1,
     ];
 
-    // ── Relationships (with @return annotations) ────────────────────────────
     /** @return \Illuminate\Database\Eloquent\Relations\HasMany<BlogPost, $this> */
     public function posts(): mixed
     {
@@ -2843,18 +2724,13 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         return $this->belongsToMany(BlogTag::class);
     }
 
-    // ── Body-Inferred Relationship (no @return annotation) ──────────────────
-    // When no @return is present, the method body is scanned for patterns
-    // like $this->morphTo() to infer the relationship type automatically.
     public function commentable()
     {
         return $this->morphTo();
     }
 
-    // ── Scopes ──────────────────────────────────────────────────────────────
     public function scopeActive(\Illuminate\Database\Eloquent\Builder $query): void
     {
-        // Try: $query-> offers ofGenre(), where(), orderBy(), etc.
         $query->where('active', true);
     }
 
@@ -2863,14 +2739,11 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         $query->where('genre', $genre);
     }
 
-    // ── Accessors ───────────────────────────────────────────────────────────
-    // Legacy accessor — produces virtual property $display_name
     public function getDisplayNameAttribute(): string
     {
         return 'display';
     }
 
-    // Modern accessor (Laravel 9+) — produces virtual property $avatar_url
     protected function avatarUrl(): \Illuminate\Database\Eloquent\Casts\Attribute
     {
         return new \Illuminate\Database\Eloquent\Casts\Attribute();
@@ -2928,10 +2801,6 @@ class HtmlString
     public function __toString(): string { return $this->html; }
 }
 
-/**
- * Custom cast class. The get() method's return type determines the property type.
- * When the get() method has no return type, the @implements generic argument is used.
- */
 class HtmlCast
 {
     public function get($model, string $key, mixed $value, array $attributes): ?HtmlString

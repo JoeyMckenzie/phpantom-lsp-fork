@@ -947,8 +947,8 @@ async fn test_completion_variable_of_child_type_includes_inherited() {
                 "Should include inherited 'start' from Vehicle"
             );
             assert!(
-                method_names.contains(&"fuelCheck"),
-                "Should include inherited protected 'fuelCheck'"
+                !method_names.contains(&"fuelCheck"),
+                "Should NOT include inherited protected 'fuelCheck' from unrelated class"
             );
             assert!(
                 !method_names.contains(&"internalDiag"),
@@ -1497,4 +1497,292 @@ async fn test_namespaced_static_method_return_type_chain() {
         "LeadProvider::query()-> should include Builder::first(). Got: {:?}",
         labels3
     );
+}
+
+// ─── Interface virtual member tests ─────────────────────────────────────────
+
+#[tokio::test]
+async fn test_interface_method_and_property_tags_visible_on_implementor() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///iface_virtual.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @property-read string $iguana\n",
+        " * @method string jaguar()\n",
+        " */\n",
+        "interface Contract {}\n",
+        "\n",
+        "/**\n",
+        " * @property string $gorilla\n",
+        " * @method bool hyena(string $x)\n",
+        " */\n",
+        "class Zoo implements Contract {\n",
+        "    public function demo(): void {\n",
+        "        $this->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 13,
+                character: 15,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(i.label.as_str()))
+                .collect();
+            let prop_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::PROPERTY))
+                .map(|i| i.filter_text.as_deref().unwrap_or(i.label.as_str()))
+                .collect();
+
+            // @method and @property on own class docblock
+            assert!(
+                method_names.contains(&"hyena"),
+                "Should include @method 'hyena' from own class docblock, got: {:?}",
+                method_names
+            );
+            assert!(
+                prop_names.contains(&"gorilla"),
+                "Should include @property 'gorilla' from own class docblock, got: {:?}",
+                prop_names
+            );
+
+            // @method and @property-read on implemented interface
+            assert!(
+                method_names.contains(&"jaguar"),
+                "Should include @method 'jaguar' from implemented interface, got: {:?}",
+                method_names
+            );
+            assert!(
+                prop_names.contains(&"iguana"),
+                "Should include @property-read 'iguana' from implemented interface, got: {:?}",
+                prop_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+#[tokio::test]
+async fn test_interface_virtual_members_visible_on_variable() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///iface_virtual_var.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @property-read string $iguana\n",
+        " * @method string jaguar()\n",
+        " */\n",
+        "interface Contract {}\n",
+        "\n",
+        "/**\n",
+        " * @property string $gorilla\n",
+        " * @method bool hyena(string $x)\n",
+        " */\n",
+        "class Zoo implements Contract {\n",
+        "    public string $baboon = '';\n",
+        "    public function aardvark(): void {}\n",
+        "}\n",
+        "\n",
+        "function demo(): void {\n",
+        "    $zoo = new Zoo();\n",
+        "    $zoo->\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 18,
+                character: 10,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(i.label.as_str()))
+                .collect();
+            let prop_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::PROPERTY))
+                .map(|i| i.filter_text.as_deref().unwrap_or(i.label.as_str()))
+                .collect();
+
+            // Own real members
+            assert!(
+                method_names.contains(&"aardvark"),
+                "Should include own method 'aardvark', got: {:?}",
+                method_names
+            );
+            assert!(
+                prop_names.contains(&"baboon"),
+                "Should include own property 'baboon', got: {:?}",
+                prop_names
+            );
+
+            // @method and @property on own class docblock
+            assert!(
+                method_names.contains(&"hyena"),
+                "Should include @method 'hyena' from own class, got: {:?}",
+                method_names
+            );
+            assert!(
+                prop_names.contains(&"gorilla"),
+                "Should include @property 'gorilla' from own class, got: {:?}",
+                prop_names
+            );
+
+            // @method and @property-read on implemented interface
+            assert!(
+                method_names.contains(&"jaguar"),
+                "Should include @method 'jaguar' from interface, got: {:?}",
+                method_names
+            );
+            assert!(
+                prop_names.contains(&"iguana"),
+                "Should include @property-read 'iguana' from interface, got: {:?}",
+                prop_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+#[tokio::test]
+async fn test_interface_virtual_members_visible_through_parent_chain() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///iface_parent_chain.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @property-read string $sensor\n",
+        " * @method string scan()\n",
+        " */\n",
+        "interface Scannable {}\n",
+        "\n",
+        "class BaseDevice implements Scannable {\n",
+        "    public function power(): void {}\n",
+        "}\n",
+        "\n",
+        "class Scanner extends BaseDevice {\n",
+        "    public function demo(): void {\n",
+        "        $this->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 13,
+                character: 15,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(i.label.as_str()))
+                .collect();
+            let prop_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::PROPERTY))
+                .map(|i| i.filter_text.as_deref().unwrap_or(i.label.as_str()))
+                .collect();
+
+            // Inherited real method from parent
+            assert!(
+                method_names.contains(&"power"),
+                "Should include inherited 'power' from BaseDevice, got: {:?}",
+                method_names
+            );
+
+            // @method from interface implemented by parent
+            assert!(
+                method_names.contains(&"scan"),
+                "Should include @method 'scan' from interface on parent class, got: {:?}",
+                method_names
+            );
+
+            // @property-read from interface implemented by parent
+            assert!(
+                prop_names.contains(&"sensor"),
+                "Should include @property-read 'sensor' from interface on parent class, got: {:?}",
+                prop_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
 }

@@ -1334,8 +1334,11 @@ impl Backend {
                 }
                 _ => None,
             },
-            // First-class callable syntax always produces a Closure.
-            Expression::PartialApplication(_) => Some("Closure".to_string()),
+            // First-class callable syntax, closure literals, and arrow
+            // functions always produce a Closure.
+            Expression::PartialApplication(_)
+            | Expression::Closure(_)
+            | Expression::ArrowFunction(_) => Some("Closure".to_string()),
             _ => None,
         }
     }
@@ -1492,10 +1495,13 @@ impl Backend {
                 combined
             }
             Expression::Clone(clone_expr) => Self::resolve_rhs_clone(clone_expr, ctx),
-            Expression::PartialApplication(_) => {
-                // First-class callable syntax: `strlen(...)`,
-                // `$obj->method(...)`, `ClassName::method(...)`.
-                // The result is always a `Closure` instance.
+            Expression::PartialApplication(_)
+            | Expression::Closure(_)
+            | Expression::ArrowFunction(_) => {
+                // First-class callable syntax (`strlen(...)`),
+                // closure literals (`function() { … }`), and
+                // arrow functions (`fn() => …`) all produce a
+                // `Closure` instance at runtime.
                 Self::type_hint_to_classes(
                     "Closure",
                     &ctx.current_class.name,

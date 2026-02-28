@@ -141,12 +141,13 @@ impl Backend {
     ///   static properties, and constants — but excludes private members.
     /// - `Other` access: returns all members.
     ///
-    /// Visibility filtering based on `current_class_name`:
+    /// Visibility filtering based on `current_class_name` and `is_self_or_ancestor`:
     /// - `None` (top-level code): only **public** members are shown.
     /// - `Some(name)` where `name == target_class.name`: all members are shown
     ///   (same-class access, e.g. `$this->`).
-    /// - `Some(name)` where `name != target_class.name`: **public** and
-    ///   **protected** members are shown (the caller might be in a subclass).
+    /// - `is_self_or_ancestor == true`: **public** and **protected** members
+    ///   are shown (the cursor is inside the target class or a subclass).
+    /// - Otherwise: only **public** members are shown.
     ///
     /// `is_self_or_ancestor` should be `true` when the cursor is inside the
     /// target class itself or inside a class that (transitively) extends the
@@ -162,8 +163,6 @@ impl Backend {
     ) -> Vec<CompletionItem> {
         // Determine whether we are inside the same class as the target.
         let same_class = current_class_name.is_some_and(|name| name == target_class.name);
-        // Inside *some* class (possibly a subclass) — show protected.
-        let in_class = current_class_name.is_some();
         let mut items: Vec<CompletionItem> = Vec::new();
 
         // Methods — filtered by static / instance, excluding magic methods
@@ -192,7 +191,7 @@ impl Backend {
             if method.visibility == Visibility::Private && !same_class {
                 continue;
             }
-            if method.visibility == Visibility::Protected && !same_class && !in_class {
+            if method.visibility == Visibility::Protected && !same_class && !is_self_or_ancestor {
                 continue;
             }
 
@@ -235,7 +234,7 @@ impl Backend {
             if property.visibility == Visibility::Private && !same_class {
                 continue;
             }
-            if property.visibility == Visibility::Protected && !same_class && !in_class {
+            if property.visibility == Visibility::Protected && !same_class && !is_self_or_ancestor {
                 continue;
             }
 
@@ -290,7 +289,10 @@ impl Backend {
                 if constant.visibility == Visibility::Private && !same_class {
                     continue;
                 }
-                if constant.visibility == Visibility::Protected && !same_class && !in_class {
+                if constant.visibility == Visibility::Protected
+                    && !same_class
+                    && !is_self_or_ancestor
+                {
                     continue;
                 }
 

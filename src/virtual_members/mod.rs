@@ -209,6 +209,59 @@ impl Backend {
         if !providers.is_empty() {
             apply_virtual_members(&mut merged, class_loader, &providers);
         }
+
+        // 3. Merge members from implemented interfaces.
+        //    Interfaces can declare `@method` / `@property` / `@property-read`
+        //    tags that should be visible on implementing classes.  We collect
+        //    interfaces from the class itself and from every parent in the
+        //    extends chain, then fully resolve each interface (which applies
+        //    its own virtual member providers) and merge any members that
+        //    don't already exist.
+        let mut all_iface_names: Vec<String> = class.interfaces.clone();
+        {
+            let mut current = class.clone();
+            let mut depth = 0u32;
+            while let Some(ref parent_name) = current.parent_class {
+                depth += 1;
+                if depth > 20 {
+                    break;
+                }
+                if let Some(parent) = class_loader(parent_name) {
+                    for iface in &parent.interfaces {
+                        if !all_iface_names.contains(iface) {
+                            all_iface_names.push(iface.clone());
+                        }
+                    }
+                    current = parent;
+                } else {
+                    break;
+                }
+            }
+        }
+        for iface_name in &all_iface_names {
+            if let Some(iface) = class_loader(iface_name) {
+                let mut resolved_iface = Self::resolve_class_with_inheritance(&iface, class_loader);
+                if !providers.is_empty() {
+                    apply_virtual_members(&mut resolved_iface, class_loader, &providers);
+                }
+                for method in resolved_iface.methods {
+                    if !merged.methods.iter().any(|m| m.name == method.name) {
+                        merged.methods.push(method);
+                    }
+                }
+                for property in resolved_iface.properties {
+                    if !merged.properties.iter().any(|p| p.name == property.name) {
+                        merged.properties.push(property);
+                    }
+                }
+                for constant in resolved_iface.constants {
+                    if !merged.constants.iter().any(|c| c.name == constant.name) {
+                        merged.constants.push(constant);
+                    }
+                }
+            }
+        }
+
         merged
     }
 }

@@ -710,7 +710,12 @@ impl Backend {
                                 break;
                             }
                             let normalized = name.strip_prefix('\\').unwrap_or(name);
-                            if normalized == target_class.name {
+                            // ClassInfo.name stores the short name (e.g. "BaseService")
+                            // while parent_class stores the FQN (e.g. "App\\BaseService").
+                            // Compare against both the full name and the short (last segment)
+                            // so that cross-file inheritance is detected correctly.
+                            let short = normalized.rsplit('\\').next().unwrap_or(normalized);
+                            if normalized == target_class.name || short == target_class.name {
                                 found = true;
                                 break;
                             }
