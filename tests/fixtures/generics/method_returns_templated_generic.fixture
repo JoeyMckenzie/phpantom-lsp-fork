@@ -1,0 +1,28 @@
+// test: method returns templated generic Collection<T> via constructor inference
+// feature: completion
+// Adapted from phpactor generics/method_returns_templated_generic.test
+// ignore: needs todo.md §2 (function-level @template constructor argument inference)
+// expect: getTimestamp(
+---
+<?php
+
+/** @template T */
+interface Collection {
+    /** @return T */
+    public function get();
+}
+
+/**
+ * @template T
+ */
+class Test
+{
+    /** @param T $foo */
+    public function __construct($foo) {}
+
+    /** @return Collection<T> */
+    public function foobar(): Collection {}
+}
+
+$foo = new Test(new DateTime());
+$foo->foobar()->get()-><>

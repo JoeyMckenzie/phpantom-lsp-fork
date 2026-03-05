@@ -1,0 +1,25 @@
+// test: conditional return type on standalone function resolves based on argument
+// feature: completion
+// Adapted from phpactor type/conditional-type-on-function.test
+// ignore: needs todo.md §3 (conditional return types on standalone functions)
+// expect: fooMethod(
+---
+<?php
+
+class Foo {
+    public function fooMethod(): void {}
+}
+
+class Bar {
+    public function barMethod(): void {}
+}
+
+/**
+ * @param array $array
+ * @return ($array is array<Foo> ? Foo : Bar)
+ */
+function array_first(array $array) {}
+
+/** @var Foo[] $foos */
+$result = array_first($foos);
+$result-><>

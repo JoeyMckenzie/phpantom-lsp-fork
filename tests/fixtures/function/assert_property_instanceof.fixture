@@ -1,0 +1,20 @@
+// test: assert on property instanceof narrows property type
+// feature: completion
+// Adapted from phpactor function/assert.properties.test
+// ignore: needs property-level narrowing (assert on $this->prop)
+// expect: barMethod(
+---
+<?php
+
+class Bar {
+    public function barMethod(): void {}
+}
+
+class Foobar {
+    public $foo;
+
+    public function test(): void {
+        assert($this->foo instanceof Bar);
+        $this->foo-><>
+    }
+}

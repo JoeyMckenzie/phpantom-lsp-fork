@@ -1,0 +1,20 @@
+// test: array_map with closure resolves return array type
+// feature: completion
+// Adapted from phpactor function/array_map.test
+// ignore: needs todo.md §19 (array function return type resolvers)
+// expect: strMethod(
+---
+<?php
+
+class StrWrapper {
+    public function strMethod(): void {}
+}
+
+/** @var int[] $numbers */
+$numbers = [10, 20, 30];
+
+$result = array_map(function (int $n): StrWrapper {
+    return new StrWrapper();
+}, $numbers);
+
+$result[0]-><>
