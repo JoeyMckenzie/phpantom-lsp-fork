@@ -516,11 +516,7 @@ impl Backend {
             if let Some(tpl) = self.find_template_def_for_hover(uri, bare_name, cursor_offset) {
                 return Some(tpl);
             }
-            // Unknown class, just show the name
-            Some(make_hover(format!(
-                "```php\n<?php\nclass {};\n```",
-                bare_name
-            )))
+            None
         }
     }
 
