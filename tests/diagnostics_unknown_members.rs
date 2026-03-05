@@ -1560,3 +1560,104 @@ class Foo {
         diags
     );
 }
+
+// ── stdClass suppression ────────────────────────────────────────────────
+
+/// stdClass is a universal object container — any property access on it
+/// should be silently accepted.
+#[test]
+fn no_diagnostic_for_property_on_stdclass() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let text = r#"<?php
+$obj = new \stdClass();
+$obj->anything;
+"#;
+    let diags = unknown_member_diagnostics(&backend, uri, text);
+    assert!(
+        diags.is_empty(),
+        "No diagnostics expected for property access on stdClass, got: {:?}",
+        diags
+    );
+}
+
+/// Method calls on stdClass should also be suppressed.
+#[test]
+fn no_diagnostic_for_method_on_stdclass() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let text = r#"<?php
+$obj = new \stdClass();
+$obj->whatever();
+"#;
+    let diags = unknown_member_diagnostics(&backend, uri, text);
+    assert!(
+        diags.is_empty(),
+        "No diagnostics expected for method call on stdClass, got: {:?}",
+        diags
+    );
+}
+
+/// When stdClass appears as a branch in a union type, suppress diagnostics
+/// for the entire union since the property could be on the stdClass branch.
+#[test]
+fn no_diagnostic_for_stdclass_in_union() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let text = r#"<?php
+class Strict {
+    public function known(): void {}
+}
+
+/** @var Strict|\stdClass $obj */
+$obj = new Strict();
+$obj->unknown_prop;
+"#;
+    let diags = unknown_member_diagnostics(&backend, uri, text);
+    assert!(
+        diags.is_empty(),
+        "No diagnostics expected when any union branch is stdClass, got: {:?}",
+        diags
+    );
+}
+
+/// stdClass passed as a parameter type hint should suppress diagnostics.
+#[test]
+fn no_diagnostic_for_stdclass_parameter() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let text = r#"<?php
+function process(\stdClass $obj): void {
+    $obj->foo;
+    $obj->bar;
+}
+"#;
+    let diags = unknown_member_diagnostics(&backend, uri, text);
+    assert!(
+        diags.is_empty(),
+        "No diagnostics expected for property access on stdClass parameter, got: {:?}",
+        diags
+    );
+}
+
+/// A method returning stdClass should suppress diagnostics on the result.
+#[test]
+fn no_diagnostic_for_stdclass_return_type() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let text = r#"<?php
+class Factory {
+    public function create(): \stdClass {
+        return new \stdClass();
+    }
+}
+$f = new Factory();
+$f->create()->name;
+"#;
+    let diags = unknown_member_diagnostics(&backend, uri, text);
+    assert!(
+        diags.is_empty(),
+        "No diagnostics expected for property access on stdClass return type, got: {:?}",
+        diags
+    );
+}

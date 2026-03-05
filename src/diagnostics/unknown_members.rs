@@ -16,6 +16,8 @@
 //! - Any resolved class has `__call` / `__callStatic` (for method calls)
 //!   or `__get` (for property access) magic methods — these accept
 //!   arbitrary member names at runtime.
+//! - Any resolved class is `stdClass` — it is a universal object
+//!   container that accepts arbitrary properties at runtime.
 //! - The member name is `class` (the magic `::class` constant).
 //! - The subject is an enum and the member is a case name (enum cases
 //!   are accessed via `::` but stored as constants).
@@ -144,6 +146,11 @@ impl Backend {
                 .iter()
                 .any(|c| has_magic_method_for_access(c, is_static, is_method_call))
             {
+                continue;
+            }
+
+            // ── Skip stdClass (universal object container) ──────────────
+            if resolved_classes.iter().any(|c| c.name == "stdClass") {
                 continue;
             }
 
@@ -1600,6 +1607,79 @@ class Consumer {
         assert!(
             diags.is_empty(),
             "No diagnostics expected when any union branch has __call, got: {:?}",
+            diags
+        );
+    }
+
+    // ── stdClass suppression ────────────────────────────────────────────
+
+    #[test]
+    fn no_diagnostic_for_property_on_stdclass() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+$obj = new \stdClass();
+$obj->anything;
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected for property access on stdClass, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn no_diagnostic_for_method_on_stdclass() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+$obj = new \stdClass();
+$obj->whatever();
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected for method call on stdClass, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn no_diagnostic_for_stdclass_in_union() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class Strict {
+    public function known(): void {}
+}
+
+/** @var Strict|\stdClass $obj */
+$obj = new Strict();
+$obj->unknown_prop;
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected when any union branch is stdClass, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn no_diagnostic_for_stdclass_parameter() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+function process(\stdClass $obj): void {
+    $obj->foo;
+    $obj->bar;
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected for property access on stdClass parameter, got: {:?}",
             diags
         );
     }
