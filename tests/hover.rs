@@ -123,7 +123,7 @@ class Builder {
 }
 
 #[test]
-fn hover_suppressed_on_foreach_variable_definition_site() {
+fn hover_active_on_foreach_variable_definition_site() {
     let backend = create_test_backend();
     let uri = "file:///test.php";
     let content = r#"<?php
@@ -139,15 +139,14 @@ class Service {
 "#;
 
     // Hover on `$item` at the foreach binding site (line 5)
-    let hover = hover_at(&backend, uri, content, 5, 29);
-    assert!(
-        hover.is_none(),
-        "hover should be suppressed on foreach variable $item"
-    );
+    let hover = hover_at(&backend, uri, content, 5, 29)
+        .expect("hover should be active on foreach variable $item");
+    let text = hover_text(&hover);
+    assert!(text.contains("Item"), "should resolve to Item: {}", text);
 }
 
 #[test]
-fn hover_suppressed_on_catch_variable_definition_site() {
+fn hover_active_on_catch_variable_definition_site() {
     let backend = create_test_backend();
     let uri = "file:///test.php";
     let content = r#"<?php
@@ -161,10 +160,13 @@ function risky(): void {
 "#;
 
     // Hover on `$e` at the catch binding site (line 4)
-    let hover = hover_at(&backend, uri, content, 4, 26);
+    let hover = hover_at(&backend, uri, content, 4, 26)
+        .expect("hover should be active on catch variable $e");
+    let text = hover_text(&hover);
     assert!(
-        hover.is_none(),
-        "hover should be suppressed on catch variable $e"
+        text.contains("Exception"),
+        "should resolve to Exception: {}",
+        text
     );
 }
 
@@ -4531,6 +4533,115 @@ function f(Widget $w): void {}
     assert!(
         !text.contains("function render"),
         "should NOT list methods for a regular class, got: {}",
+        text
+    );
+}
+
+/// Variable hover namespace is derived from the type string, not the file.
+/// A parameter typed as `\Generator<int, Pencil>` in a `Demo` namespace
+/// file should show no namespace line (Generator is global).
+#[test]
+fn hover_variable_namespace_from_type_not_file() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+namespace Demo;
+class Pencil { public function sketch(): void {} }
+class Demo {
+    /**
+     * @param \Generator<int, Pencil> $pencils
+     */
+    public function foreachGeneratorParam(\Generator $pencils): void
+    {
+        foreach ($pencils as $pencil) {
+            $pencil->sketch();
+        }
+    }
+}
+"#;
+
+    // Hover on `$pencils` inside the foreach header (line 9)
+    let hover =
+        hover_at(&backend, uri, content, 9, 18).expect("hover should be active on $pencils");
+    let text = hover_text(&hover);
+    assert!(
+        !text.contains("namespace Demo"),
+        "should not show file namespace for global Generator type, got: {}",
+        text
+    );
+    assert!(
+        text.contains("Generator<int, Pencil>"),
+        "should show full generic type, got: {}",
+        text
+    );
+}
+
+/// Catch variable hover should not show the enclosing file's namespace
+/// when the exception type is global (e.g. `\RuntimeException`).
+#[test]
+fn hover_catch_variable_namespace_from_type_not_file() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+namespace Demo;
+class Demo {
+    public function risky(): void
+    {
+        try {
+            throw new \RuntimeException('oops');
+        } catch (\RuntimeException $e) {
+            echo $e->getMessage();
+        }
+    }
+}
+"#;
+
+    // Hover on `$e` at the catch binding (line 7)
+    let hover =
+        hover_at(&backend, uri, content, 7, 36).expect("hover should be active on catch $e");
+    let text = hover_text(&hover);
+    assert!(
+        !text.contains("namespace Demo"),
+        "should not show file namespace for global RuntimeException, got: {}",
+        text
+    );
+    assert!(
+        text.contains("RuntimeException"),
+        "should show RuntimeException, got: {}",
+        text
+    );
+}
+
+/// When the type is in a real namespace (e.g. `\App\Models\User`),
+/// the hover should show `namespace App\Models;` and the short name.
+#[test]
+fn hover_variable_namespaced_type_shows_type_namespace() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+namespace App\Services;
+class MyService {
+    /**
+     * @param \App\Models\User $user
+     */
+    public function process($user): void
+    {
+        echo $user;
+    }
+}
+"#;
+
+    // Hover on `$user` in the method body (line 8)
+    let hover = hover_at(&backend, uri, content, 8, 14).expect("hover should be active on $user");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("namespace App\\Models"),
+        "should show the type's namespace, got: {}",
+        text
+    );
+    assert!(
+        !text.contains("namespace App\\Services"),
+        "should not show the file's namespace, got: {}",
         text
     );
 }

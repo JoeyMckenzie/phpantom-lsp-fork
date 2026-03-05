@@ -9,12 +9,14 @@
 //! powers completion.
 
 mod formatting;
+mod variable_type;
 
 use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::completion::resolver::ResolutionCtx;
 use crate::docblock::extract_template_params_full;
+
 use crate::symbol_map::{SymbolKind, SymbolSpan, VarDefKind};
 use crate::types::*;
 use crate::util::{find_class_at_offset, position_to_offset};
@@ -241,12 +243,20 @@ impl Backend {
         match kind {
             SymbolKind::Variable { name } => {
                 // Suppress hover when the cursor is on a variable at its
-                // definition site (parameter, foreach binding, catch, etc.)
-                // — the type is already visible in the signature.
-                // Assignments are the exception: the RHS type is not
-                // obvious from the source text, so hover is useful there.
+                // definition site where the type is already visible in
+                // the signature (parameters, properties, static/global
+                // declarations).  For assignments, foreach bindings, and
+                // catch bindings the resolved type is not obvious from the
+                // source text, so hover is useful there.
                 if let Some(def_kind) = self.lookup_var_def_kind_at(uri, name, cursor_offset)
-                    && !matches!(def_kind, VarDefKind::Assignment)
+                    && !matches!(
+                        def_kind,
+                        VarDefKind::Assignment
+                            | VarDefKind::Foreach
+                            | VarDefKind::Catch
+                            | VarDefKind::ArrayDestructuring
+                            | VarDefKind::ListDestructuring
+                    )
                 {
                     return None;
                 }
@@ -471,6 +481,30 @@ impl Backend {
             }
         };
 
+        // Try the type-string path first.  This preserves generic
+        // parameters (e.g. `Generator<int, Pencil>`) and scalar types
+        // (e.g. `int`) that the ClassInfo-based path would lose.
+        if let Some(type_str) = variable_type::resolve_variable_type_string(
+            &var_name,
+            content,
+            cursor_offset,
+            current_class,
+            &ctx.classes,
+            &class_loader,
+            Some(&function_loader as &dyn Fn(&str) -> Option<FunctionInfo>),
+        ) {
+            let short_type = shorten_type_string(&type_str);
+            let ns = resolve_type_namespace(&type_str, &class_loader);
+            let ns_line = namespace_line(&ns);
+            return Some(make_hover(format!(
+                "```php\n<?php\n{}{} = {}\n```",
+                ns_line, var_name, short_type
+            )));
+        }
+
+        // Fall back to ClassInfo-based resolution (handles cases the
+        // type-string path doesn't cover, such as instanceof narrowing
+        // and complex call chains).
         let types = crate::completion::variable::resolution::resolve_variable_types(
             &var_name,
             effective_class,
@@ -485,12 +519,13 @@ impl Backend {
             return Some(make_hover(format!("```php\n<?php\n{}\n```", var_name)));
         }
 
+        let ns_line = namespace_line(&types[0].file_namespace);
         let type_names: Vec<&str> = types.iter().map(|c| c.name.as_str()).collect();
         let type_str = type_names.join("|");
 
         Some(make_hover(format!(
-            "```php\n<?php\n{} = {}\n```",
-            var_name, type_str
+            "```php\n<?php\n{}{} = {}\n```",
+            ns_line, var_name, type_str
         )))
     }
 
@@ -858,6 +893,57 @@ impl Backend {
 
         make_hover(lines.join("\n\n"))
     }
+}
+
+/// Resolve the namespace for a type string by loading the base type
+/// through the class loader, falling back to parsing FQN strings.
+///
+/// Extracts the first class-like name from the type string (before any
+/// `<` generic params), resolves it via the class loader, and returns
+/// the resolved class's `file_namespace`.  When the class loader cannot
+/// find the type (e.g. a cross-file FQN like `\App\Models\User` that
+/// is not loaded), falls back to extracting the namespace directly from
+/// the FQN string.
+fn resolve_type_namespace(
+    type_str: &str,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
+    // Find the base type name: strip leading `\`, take everything
+    // before `<`, `|`, `&`, `?`, or `[`.
+    let stripped = type_str.strip_prefix('\\').unwrap_or(type_str);
+    let base_end = stripped
+        .find(['<', '|', '&', '?', '['])
+        .unwrap_or(stripped.len());
+    let base = stripped[..base_end].trim();
+
+    if base.is_empty() {
+        return None;
+    }
+
+    // Try both the original (possibly FQN) form and the stripped form.
+    let original_base_end = type_str
+        .find(['<', '|', '&', '?', '['])
+        .unwrap_or(type_str.len());
+    let original_base = type_str[..original_base_end].trim();
+
+    if let Some(cls) = class_loader(original_base).or_else(|| class_loader(base)) {
+        return cls
+            .file_namespace
+            .as_ref()
+            .filter(|ns| !ns.is_empty() && !ns.starts_with("___"))
+            .cloned();
+    }
+
+    // Fallback: parse the namespace from the FQN string itself.
+    // E.g. `App\Models\User` → `App\Models`.
+    if let Some(pos) = base.rfind('\\') {
+        let ns = &base[..pos];
+        if !ns.is_empty() {
+            return Some(ns.to_string());
+        }
+    }
+
+    None
 }
 
 /// Maximum number of enum cases or trait methods to show before

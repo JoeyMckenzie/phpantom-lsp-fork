@@ -784,9 +784,11 @@ fn walk_if_statement<'b>(
 
 /// Handle `foreach` statements during variable assignment walking.
 ///
-/// Only resolves the foreach value/key variable and recurses into the
-/// body when the cursor is actually inside the loop body (iteration
-/// variables are out of scope outside the loop).
+/// Resolves the foreach value/key variable and recurses into the body
+/// when the cursor is inside the loop body **or** on the foreach header
+/// (the `foreach ($expr as $val)` part).  The header check is needed so
+/// that hover on the binding variable at its definition site can resolve
+/// the iteration type.
 fn walk_foreach_statement<'b>(
     foreach: &'b Foreach<'b>,
     ctx: &VarResolutionCtx<'_>,
@@ -794,7 +796,8 @@ fn walk_foreach_statement<'b>(
     conditional: bool,
 ) {
     let body_span = foreach.body.span();
-    if ctx.cursor_offset >= body_span.start.offset && ctx.cursor_offset <= body_span.end.offset {
+    let header_start = foreach.foreach.span().start.offset;
+    if ctx.cursor_offset >= header_start && ctx.cursor_offset <= body_span.end.offset {
         // ── Foreach value/key type from generic iterables ──
         // When the variable we're resolving is the foreach
         // *value* variable, try to infer its type from the

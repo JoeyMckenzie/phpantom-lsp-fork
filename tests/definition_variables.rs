@@ -1377,51 +1377,22 @@ async fn test_goto_definition_variable_foreach_key_value() {
 // ─── Type-Hint Resolution at Variable Definition ───────────────────────────
 
 /// When the cursor is on a promoted constructor property at its definition,
-/// go-to-definition should jump to the first class type in the type hint.
-///
-/// ```php
-/// public readonly HtmlString|string $content,
-/// ```
-///
-/// Clicking on `$content` should jump to the `HtmlString` class.
+/// GTD should not trigger when the cursor is on a variable at its
+/// definition site, even if the variable has a class type hint.
+/// The type hint is a separate symbol span the user can click directly.
 #[tokio::test]
-async fn test_goto_definition_variable_at_definition_jumps_to_type_hint() {
-    let (backend, _dir) = create_psr4_workspace(
-        r#"{
-            "autoload": {
-                "psr-4": {
-                    "App\\": "src/",
-                    "Illuminate\\": "vendor/illuminate/"
-                }
-            }
-        }"#,
-        &[(
-            "vendor/illuminate/Support/HtmlString.php",
-            concat!(
-                "<?php\n",
-                "namespace Illuminate\\Support;\n",
-                "\n",
-                "class HtmlString {\n",
-                "    public function toHtml(): string {}\n",
-                "}\n",
-            ),
-        )],
-    );
+async fn test_goto_definition_variable_at_definition_returns_none() {
+    let backend = create_test_backend();
 
     let uri = Url::parse("file:///accordion.php").unwrap();
     let text = concat!(
         "<?php\n",                                               // 0
-        "namespace App\\Helpers;\n",                             // 1
-        "\n",                                                    // 2
-        "use Illuminate\\Support\\HtmlString;\n",                // 3
-        "\n",                                                    // 4
-        "final class AccordionData\n",                           // 5
-        "{\n",                                                   // 6
-        "    public function __construct(\n",                    // 7
-        "        public readonly HtmlString|string $content,\n", // 8
-        "    ) {\n",                                             // 9
-        "    }\n",                                               // 10
-        "}\n",                                                   // 11
+        "class HtmlString {}\n",                                 // 1
+        "class AccordionData {\n",                               // 2
+        "    public function __construct(\n",                    // 3
+        "        public readonly HtmlString|string $content,\n", // 4
+        "    ) {}\n",                                            // 5
+        "}\n",                                                   // 6
     );
 
     let open_params = DidOpenTextDocumentParams {
@@ -1434,12 +1405,12 @@ async fn test_goto_definition_variable_at_definition_jumps_to_type_hint() {
     };
     backend.did_open(open_params).await;
 
-    // Cursor on `$content` on line 8 (the definition itself)
+    // Cursor on `$content` on line 4 (the definition itself)
     let params = GotoDefinitionParams {
         text_document_position_params: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier { uri },
             position: Position {
-                line: 8,
+                line: 4,
                 character: 45,
             },
         },
@@ -1449,31 +1420,15 @@ async fn test_goto_definition_variable_at_definition_jumps_to_type_hint() {
 
     let result = backend.goto_definition(params).await.unwrap();
     assert!(
-        result.is_some(),
-        "Should resolve to the HtmlString class from the type hint"
+        result.is_none(),
+        "GTD should not trigger on a variable at its definition site"
     );
-
-    match result.unwrap() {
-        GotoDefinitionResponse::Scalar(location) => {
-            let path = location.uri.to_file_path().unwrap();
-            assert!(
-                path.ends_with("vendor/illuminate/Support/HtmlString.php"),
-                "Should point to HtmlString.php, got: {:?}",
-                path
-            );
-            assert_eq!(
-                location.range.start.line, 3,
-                "HtmlString class defined on line 3"
-            );
-        }
-        other => panic!("Expected Scalar location, got: {:?}", other),
-    }
 }
 
-/// When the cursor is on a parameter with a single class type hint,
-/// go-to-definition at the definition site should jump to that class.
+/// GTD should not trigger when the cursor is on a parameter at its
+/// definition site, even with a class type hint.
 #[tokio::test]
-async fn test_goto_definition_parameter_at_definition_jumps_to_type_hint() {
+async fn test_goto_definition_parameter_at_definition_returns_none() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///param_type.php").unwrap();
@@ -1501,7 +1456,7 @@ async fn test_goto_definition_parameter_at_definition_jumps_to_type_hint() {
     // Cursor on `$req` on line 5 (the parameter definition)
     let params = GotoDefinitionParams {
         text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text_document: TextDocumentIdentifier { uri },
             position: Position {
                 line: 5,
                 character: 39,
@@ -1513,26 +1468,15 @@ async fn test_goto_definition_parameter_at_definition_jumps_to_type_hint() {
 
     let result = backend.goto_definition(params).await.unwrap();
     assert!(
-        result.is_some(),
-        "Should resolve to the Request class from the type hint"
+        result.is_none(),
+        "GTD should not trigger on a parameter at its definition site"
     );
-
-    match result.unwrap() {
-        GotoDefinitionResponse::Scalar(location) => {
-            assert_eq!(location.uri, uri);
-            assert_eq!(
-                location.range.start.line, 1,
-                "Request class defined on line 1"
-            );
-        }
-        other => panic!("Expected Scalar location, got: {:?}", other),
-    }
 }
 
-/// When the type hint is a nullable class (`?Foo`), go-to-definition at the
-/// definition site should still resolve to the class.
+/// GTD should not trigger when the cursor is on a parameter with a
+/// nullable class type hint (`?Foo`).
 #[tokio::test]
-async fn test_goto_definition_variable_at_definition_nullable_type_hint() {
+async fn test_goto_definition_variable_at_definition_nullable_type_hint_returns_none() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///nullable_type.php").unwrap();
@@ -1557,10 +1501,10 @@ async fn test_goto_definition_variable_at_definition_nullable_type_hint() {
     };
     backend.did_open(open_params).await;
 
-    // Cursor on `$log` on line 5 (l=36, o=37, g=38)
+    // Cursor on `$log` on line 5
     let params = GotoDefinitionParams {
         text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text_document: TextDocumentIdentifier { uri },
             position: Position {
                 line: 5,
                 character: 37,
@@ -1572,20 +1516,9 @@ async fn test_goto_definition_variable_at_definition_nullable_type_hint() {
 
     let result = backend.goto_definition(params).await.unwrap();
     assert!(
-        result.is_some(),
-        "Should resolve to the Logger class from ?Logger type hint"
+        result.is_none(),
+        "GTD should not trigger on a parameter at its definition site"
     );
-
-    match result.unwrap() {
-        GotoDefinitionResponse::Scalar(location) => {
-            assert_eq!(location.uri, uri);
-            assert_eq!(
-                location.range.start.line, 1,
-                "Logger class defined on line 1"
-            );
-        }
-        other => panic!("Expected Scalar location, got: {:?}", other),
-    }
 }
 
 /// When the type hint is purely scalar (e.g. `string $name`), go-to-definition
@@ -1633,10 +1566,10 @@ async fn test_goto_definition_variable_at_definition_scalar_type_returns_none() 
     );
 }
 
-/// When the type hint is a union with the class type second
-/// (e.g. `string|HtmlString`), go-to-definition should still find the class.
+/// GTD should not trigger when the cursor is on a parameter with a
+/// union type hint, even when the class is the second member.
 #[tokio::test]
-async fn test_goto_definition_variable_at_definition_union_class_second() {
+async fn test_goto_definition_variable_at_definition_union_class_second_returns_none() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///union_second.php").unwrap();
@@ -1661,10 +1594,10 @@ async fn test_goto_definition_variable_at_definition_union_class_second() {
     };
     backend.did_open(open_params).await;
 
-    // Cursor on `$out` on line 5 (o=46, u=47, t=48)
+    // Cursor on `$out` on line 5
     let params = GotoDefinitionParams {
         text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text_document: TextDocumentIdentifier { uri },
             position: Position {
                 line: 5,
                 character: 47,
@@ -1676,27 +1609,15 @@ async fn test_goto_definition_variable_at_definition_union_class_second() {
 
     let result = backend.goto_definition(params).await.unwrap();
     assert!(
-        result.is_some(),
-        "Should resolve to HtmlString even though it's the second union member"
+        result.is_none(),
+        "GTD should not trigger on a parameter at its definition site"
     );
-
-    match result.unwrap() {
-        GotoDefinitionResponse::Scalar(location) => {
-            assert_eq!(location.uri, uri);
-            assert_eq!(
-                location.range.start.line, 1,
-                "HtmlString class defined on line 1"
-            );
-        }
-        other => panic!("Expected Scalar location, got: {:?}", other),
-    }
 }
 
-/// When the cursor is on a class property definition (not promoted),
-/// go-to-definition should jump to the type hint class — same behaviour
-/// as parameters.
+/// GTD should not trigger when the cursor is on a property at its
+/// definition site, even with a class type hint.
 #[tokio::test]
-async fn test_goto_definition_property_at_definition_jumps_to_type_hint() {
+async fn test_goto_definition_property_at_definition_returns_none() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///prop_type.php").unwrap();
@@ -1723,7 +1644,7 @@ async fn test_goto_definition_property_at_definition_jumps_to_type_hint() {
     // Cursor on `$logger` on line 5
     let params = GotoDefinitionParams {
         text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text_document: TextDocumentIdentifier { uri },
             position: Position {
                 line: 5,
                 character: 21,
@@ -1735,20 +1656,9 @@ async fn test_goto_definition_property_at_definition_jumps_to_type_hint() {
 
     let result = backend.goto_definition(params).await.unwrap();
     assert!(
-        result.is_some(),
-        "Property $logger should resolve to the Logger class from the type hint"
+        result.is_none(),
+        "GTD should not trigger on a property at its definition site"
     );
-
-    match result.unwrap() {
-        GotoDefinitionResponse::Scalar(location) => {
-            assert_eq!(location.uri, uri);
-            assert_eq!(
-                location.range.start.line, 1,
-                "Logger class defined on line 1"
-            );
-        }
-        other => panic!("Expected Scalar location, got: {:?}", other),
-    }
 }
 
 // ─── Foreach Variable: Consecutive Loops with Same Variable Name ────────────
@@ -2134,9 +2044,10 @@ async fn test_goto_definition_arrow_fn_rhs_param_jumps_to_same_line_param() {
 
 /// When the cursor is on the LHS (definition site) of an arrow function
 /// parameter (`$o` in `fn(Order $o) =>`), go-to-definition should jump
-/// to the type hint class — same behaviour as regular method parameters.
+/// GTD should not trigger on an arrow function parameter at its
+/// definition site, even with a class type hint.
 #[tokio::test]
-async fn test_goto_definition_arrow_fn_lhs_param_jumps_to_type_hint() {
+async fn test_goto_definition_arrow_fn_lhs_param_returns_none() {
     let backend = create_test_backend();
 
     let uri = Url::parse("file:///arrow_fn_lhs.php").unwrap();
@@ -2162,15 +2073,13 @@ async fn test_goto_definition_arrow_fn_lhs_param_jumps_to_type_hint() {
     };
     backend.did_open(open_params).await;
 
-    // Line 6: `        $list = array_map(fn(Order $o) => $o->getItems(), []);`
-    // The parameter `$o` is at col 35-36.  Cursor on the defining `$o`.
-    // GTD from a parameter at its definition site resolves the type hint.
+    // Cursor on the defining `$o` parameter on line 6
     let params = GotoDefinitionParams {
         text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text_document: TextDocumentIdentifier { uri },
             position: Position {
                 line: 6,
-                character: 36, // on the `o` of the LHS `$o` (the parameter definition)
+                character: 36,
             },
         },
         work_done_progress_params: WorkDoneProgressParams::default(),
@@ -2179,20 +2088,9 @@ async fn test_goto_definition_arrow_fn_lhs_param_jumps_to_type_hint() {
 
     let result = backend.goto_definition(params).await.unwrap();
     assert!(
-        result.is_some(),
-        "LHS $o at parameter definition site should jump to the Order class"
+        result.is_none(),
+        "GTD should not trigger on a parameter at its definition site"
     );
-
-    match result.unwrap() {
-        GotoDefinitionResponse::Scalar(location) => {
-            assert_eq!(location.uri, uri);
-            assert_eq!(
-                location.range.start.line, 1,
-                "Order class defined on line 1"
-            );
-        }
-        other => panic!("Expected Scalar location, got: {:?}", other),
-    }
 }
 
 /// Arrow function parameter with no type hint: RHS usage should still

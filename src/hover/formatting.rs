@@ -110,7 +110,10 @@ fn format_params_inner(params: &[ParameterInfo], use_native: bool) -> String {
 /// Build a `namespace Foo;\n` line for use inside PHP code blocks.
 /// Returns an empty string when the namespace is global (None).
 pub(super) fn namespace_line(namespace: &Option<String>) -> String {
-    if let Some(ns) = namespace {
+    if let Some(ns) = namespace
+        && !ns.is_empty()
+        && !ns.starts_with("___")
+    {
         format!("namespace {};\n", ns)
     } else {
         String::new()

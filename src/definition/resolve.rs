@@ -165,16 +165,18 @@ impl Backend {
                 // for assignments the definition's `effective_from` is past
                 // the LHS token — the lookup would skip the definition and
                 // find an earlier one instead of recognising "at definition".
-                if let Some(def_kind) = self.lookup_var_def_kind_at(uri, name, cursor_offset) {
-                    // The cursor is on a variable at its definition site.
-                    // Try to resolve the type hint so the user can jump
-                    // from `HtmlString|string $content` to `HtmlString`.
-                    // For all definition kinds (parameter, catch, foreach,
-                    // property, assignment, etc.) the behaviour is the
-                    // same: attempt type-hint resolution and return None
-                    // when no navigable type hint exists.
-                    let _ = def_kind; // all kinds use the same path
-                    return self.resolve_type_hint_at_variable(uri, content, position, &var_name);
+                if self
+                    .lookup_var_def_kind_at(uri, name, cursor_offset)
+                    .is_some()
+                {
+                    // The cursor is on a variable at its definition site
+                    // (assignment LHS, parameter, foreach binding, catch
+                    // binding, etc.).  GTD should not trigger here — the
+                    // user is already at the definition.  Type hints next
+                    // to the variable (e.g. `Throwable` in `catch
+                    // (Throwable $it)`) are separate symbol spans that
+                    // the user can click directly.
+                    return None;
                 }
 
                 if let Some(var_def) = self.lookup_var_definition(uri, name, cursor_offset) {
@@ -199,8 +201,7 @@ impl Backend {
                 {
                     return Some(location);
                 }
-                // Already at definition — try type-hint resolution.
-                self.resolve_type_hint_at_variable(uri, content, position, &var_name)
+                None
             }
 
             SymbolKind::MemberAccess {

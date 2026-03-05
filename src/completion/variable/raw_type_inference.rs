@@ -170,7 +170,7 @@ impl AssignmentAccumulator {
 /// candidate source for
 /// [`try_chained_array_access_with_candidates`](crate::completion::source::helpers)
 /// when resolving array access chains.
-pub(in crate::completion) fn resolve_variable_assignment_raw_type(
+pub(crate) fn resolve_variable_assignment_raw_type(
     var_name: &str,
     content: &str,
     cursor_offset: u32,
