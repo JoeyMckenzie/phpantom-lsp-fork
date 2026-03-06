@@ -110,10 +110,34 @@ impl LanguageServer for Backend {
             .and_then(|guard| guard.clone());
 
         if let Some(root) = workspace_root {
-            // Detect the target PHP version from composer.json before
-            // any stub parsing happens, so that version-aware filtering
-            // is active from the very first file load.
-            let php_version = composer::detect_php_version(&root).unwrap_or_default();
+            // ── Load project configuration ──────────────────────────────
+            // Read `.phpantom.toml` before anything else so that settings
+            // (e.g. PHP version override, diagnostic toggles) are active
+            // from the very first file load.
+            match crate::config::load_config(&root) {
+                Ok(cfg) => {
+                    if let Ok(mut guard) = self.config.lock() {
+                        *guard = cfg;
+                    }
+                }
+                Err(e) => {
+                    self.log(
+                        MessageType::WARNING,
+                        format!("Failed to load .phpantom.toml: {}", e),
+                    )
+                    .await;
+                }
+            }
+
+            // Detect the target PHP version.  The config file override
+            // takes precedence; otherwise fall back to composer.json.
+            let php_version = self
+                .config()
+                .php
+                .version
+                .as_deref()
+                .and_then(crate::types::PhpVersion::from_composer_constraint)
+                .unwrap_or_else(|| composer::detect_php_version(&root).unwrap_or_default());
             self.set_php_version(php_version);
 
             let (mappings, vendor_dir) = composer::parse_composer_json(&root);

@@ -35,6 +35,31 @@ If your project doesn't use Composer, you can create a minimal `composer.json`:
 
 Then run `composer dump-autoload -o`.
 
+## Configuration
+
+PHPantom supports an optional per-project configuration file for settings like PHP version overrides and diagnostic toggles.
+
+To generate a default config file with all options documented and commented out:
+
+```bash
+phpantom_lsp --init
+```
+
+This creates a `.phpantom.toml` in the current directory. Currently supported settings:
+
+```toml
+[php]
+# Override the detected PHP version (default: inferred from composer.json, or 8.5).
+# version = "8.5"
+
+[diagnostics]
+# Report member access on subjects whose type could not be resolved.
+# Useful for discovering gaps in type coverage. Off by default.
+# unresolved-member-access = true
+```
+
+The file is optional. When absent, all settings use their defaults. New settings will be added as features land. Unknown keys are silently ignored, so the file is forward-compatible.
+
 ## Editor Setup
 
 PHPantom communicates over stdin/stdout using the standard [Language Server Protocol](https://microsoft.github.io/language-server-protocol/). Any editor with LSP support can use it. Point the client at the `phpantom_lsp` binary with `php` as the file type. No special initialization options are required.

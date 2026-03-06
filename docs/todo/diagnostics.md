@@ -11,7 +11,7 @@ within the same impact tier.
 ---
 
 ## 2. Resolution-failure diagnostics
-**Impact: Medium · Effort: Medium** *(partially done — unresolved class/interface and unresolved member access implemented)*
+**Impact: Medium · Effort: Medium** *(mostly done — unresolved class/interface, unresolved member access, and unresolvable subject type implemented; unresolved function and unresolved PHPDoc type remain)*
 
 Report diagnostics only for symbols and types that PHPantom's own engine
 failed to resolve. This is **not** a general PHP linter — we don't check
@@ -37,6 +37,7 @@ unresolved types (the code may still run fine) and **Hint** or
 | ✅ Unresolved class/interface | A type hint, `extends`, `implements`, `new`, or `::` reference that `find_or_load_class` cannot resolve after all phases (ast_map → classmap → PSR-4 → stubs) | Warning | `Class 'App\Foo' not found` | *Done — `diagnostics::unknown_classes` module* |
 | Unresolved function | A function call that `find_or_load_function` cannot resolve (global functions, namespaced functions, stubs) | Warning | `Function 'do_thing' not found` |
 | ✅ Unresolved member access | `->method()` or `->property` on a type we *did* resolve, but the member doesn't exist after full resolution (inheritance + virtual providers) | Warning | `Method 'frobnicate' not found on class 'App\Bar'` | *Done — `diagnostics::unknown_members` module. PHPactor benchmark fixtures `lots_of_missing_methods` and `method_chain` enabled in `benches/completion.rs`.* |
+| ✅ Unresolvable subject type (opt-in) | `->method()`, `?->method()`, or `::method()` where PHPantom cannot resolve the subject type at all (e.g. `mixed`, untyped variable, uninferrable return type) | Hint | `Cannot resolve type of '$x'. Add a type annotation or PHPDoc tag to enable full IDE support.` | *Done — `diagnostics::unresolved_member_access` module. Off by default; enable via `[diagnostics] unresolved-member-access = true` in `.phpantom.toml`.* |
 | Unresolved type in PHPDoc | A `@return`, `@param`, `@var`, `@throws`, `@mixin`, or `@extends` tag references a class that cannot be resolved | Information | `Type 'SomeAlias' in @return could not be resolved` |
 
 

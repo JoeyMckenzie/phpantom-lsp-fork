@@ -50,6 +50,10 @@
 //!   - `diagnostics::unknown_classes` — unknown class diagnostics
 //!     (`Severity::Warning` on `ClassReference` spans that cannot be resolved
 //!     through any resolution phase)
+//!   - `diagnostics::unresolved_member_access` — opt-in diagnostic
+//!     (`Severity::Hint` on `MemberAccess` spans where the subject type
+//!     cannot be resolved at all; enabled via `[diagnostics]
+//!     unresolved-member-access = true` in `.phpantom.toml`)
 //! - [`docblock`] — PHPDoc block parsing, split into submodules:
 //!   - `docblock::tags` — tag extraction (`@return`, `@var`, `@property`, `@method`,
 //!     `@mixin`, `@deprecated`, `@phpstan-assert`, docblock text retrieval)
@@ -72,6 +76,7 @@ use tower_lsp::Client;
 mod code_actions;
 pub mod completion;
 pub mod composer;
+pub mod config;
 mod definition;
 pub mod diagnostics;
 pub mod docblock;
@@ -127,7 +132,8 @@ pub use virtual_members::resolve_class_fully;
 /// - `definition` — `resolve_definition`, member resolution, function resolution
 /// - `diagnostics` — `publish_diagnostics_for_file`, `clear_diagnostics_for_file`,
 ///   `collect_deprecated_diagnostics`, `collect_unused_import_diagnostics`,
-///   `collect_unknown_class_diagnostics`, `collect_unknown_member_diagnostics`
+///   `collect_unknown_class_diagnostics`, `collect_unknown_member_diagnostics`,
+///   `collect_unresolved_member_access_diagnostics`
 /// - `highlight` — `handle_document_highlight` (same-file symbol occurrence highlighting)
 pub struct Backend {
     pub(crate) name: String,
@@ -270,6 +276,14 @@ pub struct Backend {
     /// Wrapped in `Arc` so the diagnostic worker task (spawned during
     /// `initialized`) shares the same slot as the main `Backend`.
     pub(crate) diag_pending_uri: Arc<Mutex<Option<String>>>,
+    /// Per-project configuration loaded from `.phpantom.toml`.
+    ///
+    /// Read once during `initialized` from the workspace root directory.
+    /// When the file is missing or cannot be parsed, all settings use
+    /// their defaults.  Wrapped in a `Mutex` so that `initialized`
+    /// (which receives `&self`) can set it after loading the file.
+    /// The diagnostic worker snapshots the value at spawn time.
+    pub(crate) config: Mutex<config::Config>,
 }
 
 impl Backend {
@@ -304,6 +318,7 @@ impl Backend {
             diag_version: Arc::new(AtomicU64::new(0)),
             diag_notify: Arc::new(tokio::sync::Notify::new()),
             diag_pending_uri: Arc::new(Mutex::new(None)),
+            config: Mutex::new(config::Config::default()),
         }
     }
 
@@ -457,7 +472,16 @@ impl Backend {
             diag_version: Arc::clone(&self.diag_version),
             diag_notify: Arc::clone(&self.diag_notify),
             diag_pending_uri: Arc::clone(&self.diag_pending_uri),
+            config: Mutex::new(self.config.lock().map(|g| g.clone()).unwrap_or_default()),
         }
+    }
+
+    /// Return the current project configuration.
+    ///
+    /// Returns a clone of the [`Config`](config::Config) loaded from
+    /// `.phpantom.toml` (or the default config when the file is missing).
+    pub fn config(&self) -> config::Config {
+        self.config.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     /// Set the PHP version (used by integration tests and during

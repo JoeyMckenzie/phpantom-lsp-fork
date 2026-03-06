@@ -15,6 +15,12 @@
 //!   the member does not exist on the resolved class after full
 //!   resolution (inheritance + virtual member providers).  Suppressed
 //!   when the class has `__call` / `__callStatic` / `__get` magic methods.
+//! - **Unresolved member access diagnostics** (opt-in) — report
+//!   `MemberAccess` spans where the **subject type** cannot be resolved
+//!   at all.  Off by default; enable via `[diagnostics]
+//!   unresolved-member-access = true` in `.phpantom.toml`.  Uses
+//!   `Severity::HINT` to surface type-coverage gaps without drowning
+//!   the editor in warnings.
 //!
 //! Diagnostics are published **asynchronously** via [`Backend::schedule_diagnostics`].
 //! On every `did_change` event a version counter is bumped and the
@@ -29,6 +35,7 @@
 mod deprecated;
 pub(crate) mod unknown_classes;
 pub(crate) mod unknown_members;
+pub(crate) mod unresolved_member_access;
 mod unused_imports;
 
 use std::sync::atomic::Ordering;
@@ -89,6 +96,9 @@ impl Backend {
 
         // ── Unknown member access ───────────────────────────────────────
         self.collect_unknown_member_diagnostics(uri_str, content, &mut diagnostics);
+
+        // ── Unresolved member access (opt-in) ───────────────────────────
+        self.collect_unresolved_member_access_diagnostics(uri_str, content, &mut diagnostics);
 
         client.publish_diagnostics(uri, diagnostics, None).await;
     }

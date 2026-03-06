@@ -1850,6 +1850,29 @@ class UnknownMemberDemo
 }
 
 
+// ── Diagnostic: Unresolved Member Access (opt-in) ───────────────────────────
+// When PHPantom cannot resolve the *subject type* of a member access at all,
+// it can show a hint-level diagnostic.  This is off by default because most
+// codebases lack full type coverage.  Enable it in .phpantom.toml:
+//
+//   [diagnostics]
+//   unresolved-member-access = true
+//
+// This is useful for discovering gaps in type coverage or places where
+// PHPantom's inference falls short.
+
+class UnresolvedMemberAccessDemo
+{
+    public function demo(): void
+    {
+        // $mystery has type "mixed" — PHPantom cannot resolve it.
+        // With the diagnostic enabled, a hint appears on the next line:
+        $mystery = getUnknownValue();
+        $mystery->doSomething();
+    }
+}
+
+
 // ── Implement Missing Methods (Code Action) ─────────────────────────────────
 // Place the cursor inside ImplementMethodsDemo and trigger "Quick Fix" or
 // "Code Action" to see "Implement 3 missing methods".  The generated stubs
@@ -2738,8 +2761,6 @@ class Brush
     public function stroke(): string { return ''; }
     public function getCanvas(): Canvas { return new Canvas(); }
     protected function calibrate(): void {}       // trip wire — must NOT appear on $studio->brush->
-
-    /** @deprecated */
     public static function find(int $id): ?static { return null; }
 }
 

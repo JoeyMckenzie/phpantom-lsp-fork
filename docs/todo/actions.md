@@ -13,6 +13,11 @@ No quick fixes or refactoring suggestions exist today. No `codeActionProvider` i
 `WorkspaceEdit` generation infrastructure beyond trivial `TextEdit`s for
 use-statement insertion.
 
+**Refactoring code actions overview:** §3 (Extract Function), §7 (Inline
+Variable), §8 (Extract Variable), and §9 (Inline Function/Method) form
+the core refactoring toolkit. They share infrastructure for scope
+analysis, variable usage tracking, and `WorkspaceEdit` generation.
+
 ---
 
 ## 1. Implement missing abstract/interface methods
@@ -297,3 +302,241 @@ appears as:
 ### Prerequisites
 
 - Unused `use` detection (shared with the dimming diagnostic).
+
+---
+
+## 7. Inline Variable
+**Impact: Medium · Effort: Medium**
+
+Replace every occurrence of a variable with its right-hand-side
+expression and delete the assignment. This is one of the most frequently
+used refactorings in day-to-day editing.
+
+### Behaviour
+
+- **Trigger:** The cursor is on a variable assignment like
+  `$name = $user->getName();`. The code action replaces every read of
+  `$name` in the enclosing scope with `$user->getName()` and removes
+  the assignment statement.
+- **Code action kind:** `refactor.inline`.
+
+### Safety checks
+
+Before offering the action, verify:
+
+1. **Single assignment.** The variable is assigned exactly once in the
+   enclosing scope. If it is reassigned, inlining would change
+   semantics. Reject and do not offer the action.
+2. **Pure expression.** The RHS must be free of side effects if the
+   variable is read more than once. Inlining `$x = getNextId()` into
+   three call sites would call the function three times. Heuristic:
+   treat method/function calls and `new` expressions as having side
+   effects. Property accesses, constants, literals, and variable reads
+   are safe.
+   - If the RHS has side effects and there is exactly one read, the
+     inline is still safe (evaluation count doesn't change).
+   - If the RHS has side effects and there are multiple reads, reject.
+3. **No intervening mutation.** Between the assignment and each read
+   site, no statement mutates any variable or property referenced by the
+   RHS. For the initial implementation, skip this check for simple
+   RHS expressions (literals, single variable reads) and reject complex
+   expressions where proving safety is hard.
+4. **Parenthesisation.** When substituting the RHS into a larger
+   expression, wrap in parentheses if needed to preserve precedence.
+   For example, inlining `$x = $a + $b` into `$x * 2` must produce
+   `($a + $b) * 2`.
+
+### Scope
+
+- Start with local variables inside function/method bodies.
+- Properties (`$this->foo`) and class constants are out of scope for the
+  initial implementation.
+
+### Implementation
+
+- Reuse the scope analysis / variable usage tracking from the
+  `ScopeCollector` infrastructure (see §3, Extract Function). The
+  collector already identifies all reads and writes of each variable
+  with byte offsets.
+- Collect all read sites for the target variable in the enclosing scope.
+- Build a `WorkspaceEdit` that:
+  1. Deletes the assignment statement (including trailing semicolon and
+     newline).
+  2. Replaces each read occurrence with the RHS text, adding parentheses
+     where necessary.
+
+### Prerequisites
+
+| Feature | What it contributes |
+|---|---|
+| Extract Function (§3) scope analysis | `ScopeCollector` that tracks all variable reads/writes with byte offsets |
+
+---
+
+## 8. Extract Variable
+**Impact: Medium · Effort: Medium**
+
+Select an expression and extract it into a new local variable assigned
+just before the enclosing statement. This is the inverse of Inline
+Variable.
+
+### Behaviour
+
+- **Trigger:** The user selects an expression (e.g. `$user->getName()`
+  inside a longer statement). The code action introduces a new variable
+  with a generated name, assigns the selected expression to it, and
+  replaces the selection (and optionally all identical occurrences) with
+  the new variable.
+- **Code action kind:** `refactor.extract`.
+
+### Name generation
+
+Generate a default name from the expression:
+
+- Method call: `$user->getName()` → `$getName` or `$name`.
+- Property access: `$user->email` → `$email`.
+- Static call: `Carbon::now()` → `$now`.
+- Function call: `array_filter($items, ...)` → `$arrayFilter` or
+  `$filtered`.
+- Fallback: `$variable` with a numeric suffix if needed.
+
+The user will typically rename the variable immediately after extraction
+(editors select the name for in-place rename), so the generated name
+just needs to be reasonable, not perfect.
+
+### Duplicate replacement
+
+When the same expression appears multiple times in the enclosing scope,
+offer two variants:
+
+1. **Extract (this occurrence only)** — replaces only the selected
+   occurrence.
+2. **Extract (all N occurrences)** — replaces every textually identical
+   occurrence in the enclosing function body.
+
+For the initial implementation, textual equality is sufficient. Semantic
+equivalence (detecting that `$a->foo()` and `$a ->foo()` are the same)
+is a follow-up.
+
+### Insertion point
+
+Insert the new assignment on the line immediately before the statement
+that contains the selected expression, at the same indentation level.
+If the expression is inside a control-flow header (e.g. `if ($x->isValid())`),
+insert before the `if` statement, not inside the condition.
+
+### Implementation
+
+- Determine the selected expression's AST node and its text.
+- Find the enclosing statement node to determine the insertion point.
+- Generate the variable name from the expression.
+- Build a `WorkspaceEdit` that:
+  1. Inserts `$varName = <expression>;\n` before the enclosing statement.
+  2. Replaces the selected expression with `$varName`.
+  3. Optionally replaces other identical occurrences.
+
+### Prerequisites
+
+| Feature | What it contributes |
+|---|---|
+| Extract Function (§3) scope analysis | Enclosing scope detection and variable name collision avoidance |
+
+---
+
+## 9. Inline Function/Method
+**Impact: Medium · Effort: High**
+
+Replace a function or method call with the body of the called function,
+substituting parameters with the corresponding arguments.
+
+### Behaviour
+
+- **Trigger:** The cursor is on a function or method call. The code
+  action replaces the call with the inlined body of the callee.
+- **Code action kind:** `refactor.inline`.
+
+### Simple case (single return statement)
+
+When the callee body is a single `return <expr>;` statement:
+
+- Replace the call expression with `<expr>`, substituting each parameter
+  name with the corresponding argument expression.
+- Add parentheses around substituted arguments where necessary to
+  preserve precedence.
+
+Example:
+
+```php
+function fullName(string $first, string $last): string {
+    return $first . ' ' . $last;
+}
+// Before:
+$name = fullName($user->first, $user->last);
+// After:
+$name = $user->first . ' ' . $user->last;
+```
+
+### Multi-statement body
+
+When the callee has multiple statements:
+
+- Replace the call statement with the full body of the callee, with
+  parameter substitutions applied throughout.
+- If the call site captures a return value (`$x = foo()`), replace the
+  `return <expr>;` at the end of the inlined body with `$x = <expr>;`.
+- If there are multiple `return` statements (early returns), the inline
+  is significantly harder. For the initial implementation, reject
+  functions with multiple return paths.
+
+### Safety checks
+
+1. **Resolvable callee.** The callee must resolve to a single known
+   function or method definition. Dynamic calls (`$fn()`,
+   `$obj->$method()`) are rejected.
+2. **No recursion.** If the callee calls itself (directly or
+   indirectly), reject. Detecting indirect recursion is hard, so start
+   with direct recursion only.
+3. **No `$this` / `self` / `static` leakage.** If inlining a method
+   call and the method body references `$this`, `self::`, or `static::`,
+   the inlined code must be placed in a context where those references
+   still make sense (i.e. within the same class or a subclass). If the
+   call site is a standalone function, reject.
+4. **Variable name collisions.** Local variables in the callee body
+   might collide with variables at the call site. Rename the callee's
+   locals if they shadow call-site variables.
+5. **By-reference parameters.** If a parameter is passed by reference,
+   the corresponding argument must be a variable (not an expression).
+   This is already enforced by PHP, so no extra check is needed.
+6. **Single return.** For the initial implementation, reject callees
+   with multiple `return` statements or `return` inside
+   loops/conditionals.
+
+### Scope
+
+- Start with standalone functions and static methods (no `$this`
+  complications).
+- Instance methods where the call site is within the same class are a
+  natural second step.
+- Cross-file inlining (the callee is in a different file) requires
+  loading the callee's source. The infrastructure for this exists
+  (PSR-4 loader, `find_or_load_class`), but the callee needs to be
+  loaded as raw source text, not just as parsed `ClassInfo`.
+
+### Implementation
+
+- Resolve the call to its definition using Go-to-Definition
+  infrastructure.
+- Read the callee's body text from the source file.
+- Parse parameter names from the callee's signature.
+- Build a substitution map: parameter name → argument expression text.
+- Apply substitutions throughout the body text.
+- Detect and rename colliding local variables.
+- Build a `WorkspaceEdit` that replaces the call statement with the
+  transformed body.
+
+### Prerequisites
+
+| Feature | What it contributes |
+|---|---|
+| Go-to-Definition | Resolves call site to the callee's definition location and source |
+| Extract Function (§3) scope analysis | Variable collision detection at the call site |

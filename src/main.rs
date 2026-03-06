@@ -2,6 +2,7 @@ use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
 use phpantom_lsp::Backend;
+use phpantom_lsp::config;
 use tower_lsp::{LspService, Server};
 
 const STYLES: Styles = Styles::styled()
@@ -16,11 +17,41 @@ const STYLES: Styles = Styles::styled()
     version,
     about = "A fast and lightweight PHP Language Server Protocol implementation"
 )]
-struct Cli {}
+struct Cli {
+    /// Create a default .phpantom.toml configuration file in the current directory and exit.
+    #[arg(long)]
+    init: bool,
+}
 
 #[tokio::main]
 async fn main() {
-    Cli::parse();
+    let cli = Cli::parse();
+
+    if cli.init {
+        let cwd = std::env::current_dir().unwrap_or_else(|e| {
+            eprintln!("Error: cannot determine current directory: {}", e);
+            std::process::exit(1);
+        });
+
+        match config::create_default_config(&cwd) {
+            Ok(true) => {
+                println!("Created {} in {}", config::CONFIG_FILE_NAME, cwd.display());
+            }
+            Ok(false) => {
+                println!(
+                    "{} already exists in {}",
+                    config::CONFIG_FILE_NAME,
+                    cwd.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        return;
+    }
 
     env_logger::init();
 

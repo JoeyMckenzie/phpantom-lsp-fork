@@ -98,7 +98,7 @@ Controls which external tools PHPantom proxies for diagnostics.
 
 ## Implementation order
 
-1. **Config loading.** Read `.phpantom.toml` from the workspace root on `initialized`. Deserialize with `toml` + `serde`. Missing file means all defaults.
+1. ✅ **Config loading.** Read `.phpantom.toml` from the workspace root on `initialized`. Deserialize with `toml` + `serde`. Missing file means all defaults. *Done — `src/config.rs` module, loaded during `initialized` in `server.rs`. Parse errors are reported as a warning to the user.*
 2. **Config writing.** When PHPantom prompts the user and gets an answer, write or update the relevant key. Preserve comments and formatting (use `toml_edit` crate).
-3. **PHP version override.** Wire `[php].version` into the existing version detection path.
-4. **Diagnostic proxying.** Wire `[diagnostics]` toggles into the proxy infrastructure as each provider is implemented.
+3. ✅ **PHP version override.** Wire `[php].version` into the existing version detection path. *Done — config override takes precedence over `composer.json` detection.*
+4. **Diagnostic proxying.** Wire `[diagnostics]` toggles into the proxy infrastructure as each provider is implemented. *Partially done — `unresolved-member-access` toggle is wired; external tool toggles (`phpstan`, `phpmd`, etc.) await proxy infrastructure.*

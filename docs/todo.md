@@ -18,7 +18,7 @@ with each step.
 | [Type Inference](todo/type-inference.md) | Generic resolution, conditional return types, type narrowing, stub attribute handling |
 | [Completion](todo/completion.md) | Completion-specific improvements (enum return types, array shapes, expected values) |
 | [Diagnostics](todo/diagnostics.md) | `@deprecated` warnings, resolution-failure diagnostics, unused `use` dimming, suppression intelligence |
-| [Code Actions](todo/actions.md) | Import class, remove unused imports, implement missing methods, null coalescing simplification, extract function, switch→match |
+| [Code Actions](todo/actions.md) | Import class, remove unused imports, implement missing methods, null coalescing simplification, extract function, inline variable, extract variable, inline function/method, switch→match |
 | [LSP Features](todo/lsp-features.md) | Find references, document highlighting, document/workspace symbols, rename, code lens, inlay hints, PHPDoc generation, partial result streaming |
 | [Hover](todo/hover.md) | Deprecation messages, constant values, member origin indicators, enum case listing, trait method summaries |
 | [Signature Help](todo/signature-help.md) | Parameter descriptions, signature-level docs, default values, attribute/closure support |
@@ -39,13 +39,18 @@ diagnostics, unused-import dimming, and implement missing methods.
 
 ## Sprint 2 — Refactoring & references
 
-Extract Function is the remaining refactoring pillar. Find References
-and Rename provide the variable/symbol usage tracking infrastructure
-it depends on, and both are now complete.
+Extract Function is the remaining refactoring pillar. Inline Variable,
+Extract Variable, and Inline Function/Method round out the core
+refactoring toolkit, sharing scope analysis infrastructure with Extract
+Function. Find References and Rename provide the variable/symbol usage
+tracking infrastructure they depend on, and both are now complete.
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
 | 17 | Extract Function refactoring | Very High | Code Actions | [actions.md §3](todo/actions.md#3-extract-function-refactoring) |
+| 76 | Inline Variable | Medium | Code Actions | [actions.md §7](todo/actions.md#7-inline-variable) |
+| 77 | Extract Variable | Medium | Code Actions | [actions.md §8](todo/actions.md#8-extract-variable) |
+| 78 | Inline Function/Method | High | Code Actions | [actions.md §9](todo/actions.md#9-inline-functionmethod) |
 
 ---
 
