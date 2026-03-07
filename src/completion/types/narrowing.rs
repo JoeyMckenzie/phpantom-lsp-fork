@@ -136,12 +136,11 @@ pub(in crate::completion) fn try_apply_instanceof_narrowing(
         return;
     }
 
-    if let Some((cls_name, negated)) = try_extract_instanceof_with_negation(condition, ctx.var_name)
-    {
-        if negated {
-            apply_instanceof_exclusion(&cls_name, ctx, results);
+    if let Some(extraction) = try_extract_instanceof_with_negation(condition, ctx.var_name) {
+        if extraction.negated {
+            apply_instanceof_exclusion(&extraction.class_name, ctx, results);
         } else {
-            apply_instanceof_inclusion(&cls_name, ctx, results);
+            apply_instanceof_inclusion(&extraction.class_name, extraction.exact, ctx, results);
         }
     }
 }
@@ -177,21 +176,33 @@ pub(in crate::completion) fn try_apply_instanceof_narrowing_inverse(
     // In the else branch, at least one doesn't hold.  Since we can't
     // precisely model "not (A and B)", we don't narrow.  Fall through.
 
-    if let Some((cls_name, negated)) = try_extract_instanceof_with_negation(condition, ctx.var_name)
-    {
+    if let Some(extraction) = try_extract_instanceof_with_negation(condition, ctx.var_name) {
         // Flip the polarity: positive condition → exclude in else,
         // negated condition → include in else.
-        if negated {
-            apply_instanceof_inclusion(&cls_name, ctx, results);
+        if extraction.negated {
+            apply_instanceof_inclusion(&extraction.class_name, extraction.exact, ctx, results);
         } else {
-            apply_instanceof_exclusion(&cls_name, ctx, results);
+            apply_instanceof_exclusion(&extraction.class_name, ctx, results);
         }
     }
 }
 
 /// Replace `results` with only the resolved classes for `cls_name`.
+/// Narrow `results` to include only classes matching `cls_name`.
+///
+/// When `exact` is `false` (the common `instanceof` / `is_a()` case),
+/// existing results that are already subtypes of the narrowing class are
+/// kept as-is because they are more specific and already satisfy the
+/// check.  For example, if results = `[Zoo]` and we narrow to
+/// `ZooBase`, `Zoo extends ZooBase` means `Zoo` is already more specific
+/// so it is preserved.
+///
+/// When `exact` is `true` (`get_class($x) === Foo::class` or
+/// `$x::class === Foo::class`), the variable is narrowed to exactly
+/// that class regardless of the current results.
 pub(in crate::completion) fn apply_instanceof_inclusion(
     cls_name: &str,
+    exact: bool,
     ctx: &VarResolutionCtx<'_>,
     results: &mut Vec<ClassInfo>,
 ) {
@@ -201,14 +212,104 @@ pub(in crate::completion) fn apply_instanceof_inclusion(
         ctx.all_classes,
         ctx.class_loader,
     );
-    if !narrowed.is_empty() {
-        results.clear();
-        for cls in narrowed {
-            if !results.iter().any(|c| c.name == cls.name) {
-                results.push(cls);
-            }
+    if narrowed.is_empty() {
+        return;
+    }
+
+    // For non-exact checks (instanceof / is_a), keep existing results
+    // that are already subtypes of the narrowing class.  For example,
+    // if results = [Zoo] and we narrow to ZooBase, Zoo extends ZooBase
+    // so Zoo is already more specific — keep it.
+    if !exact {
+        let already_subtypes: Vec<ClassInfo> = results
+            .iter()
+            .filter(|r| {
+                narrowed
+                    .iter()
+                    .any(|n| is_subtype_of(r, &n.name, ctx.class_loader))
+            })
+            .cloned()
+            .collect();
+
+        if !already_subtypes.is_empty() {
+            // All kept results are already subtypes of the narrowing
+            // class, so the instanceof check is satisfied without
+            // widening.
+            *results = already_subtypes;
+            return;
         }
     }
+
+    // Exact identity check, or no existing result is a subtype —
+    // replace with the narrowed type.
+    results.clear();
+    for cls in narrowed {
+        if !results.iter().any(|c| c.name == cls.name) {
+            results.push(cls);
+        }
+    }
+}
+
+/// Check whether `class` is a subtype of the class identified by
+/// `ancestor_name`.  Returns `true` when:
+///
+/// - `class.name` equals `ancestor_name` (same class), or
+/// - walking the `parent_class` chain reaches `ancestor_name`, or
+/// - `ancestor_name` appears in the `interfaces` list of `class` or any
+///   of its ancestors.
+///
+/// Both short names and fully-qualified names are compared so that
+/// cross-file relationships (where `parent_class` stores FQNs) work.
+fn is_subtype_of(
+    class: &ClassInfo,
+    ancestor_name: &str,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> bool {
+    let ancestor_short = ancestor_name.rsplit('\\').next().unwrap_or(ancestor_name);
+
+    // Same class?
+    if class.name == ancestor_name || class.name == ancestor_short {
+        return true;
+    }
+
+    // Check interfaces on the class itself.
+    for iface in &class.interfaces {
+        let iface_norm = iface.strip_prefix('\\').unwrap_or(iface);
+        let iface_short = iface_norm.rsplit('\\').next().unwrap_or(iface_norm);
+        if iface_norm == ancestor_name || iface_short == ancestor_short {
+            return true;
+        }
+    }
+
+    // Walk the parent chain.
+    let mut current_parent = class.parent_class.clone();
+    let mut depth = 0u32;
+    while let Some(ref name) = current_parent {
+        depth += 1;
+        if depth > 20 {
+            break;
+        }
+        let normalized = name.strip_prefix('\\').unwrap_or(name);
+        let short = normalized.rsplit('\\').next().unwrap_or(normalized);
+        if normalized == ancestor_name || short == ancestor_short {
+            return true;
+        }
+        // Load the parent to check its interfaces and continue the chain.
+        if let Some(parent_info) = class_loader(name) {
+            for iface in &parent_info.interfaces {
+                let iface_norm = iface.strip_prefix('\\').unwrap_or(iface);
+                let iface_short = iface_norm.rsplit('\\').next().unwrap_or(iface_norm);
+                if iface_norm == ancestor_name || iface_short == ancestor_short {
+                    return true;
+                }
+            }
+            current_parent = parent_info.parent_class.clone();
+        } else {
+            break;
+        }
+    }
+
+    false
 }
 
 /// Remove the resolved classes for `cls_name` from `results`.
@@ -268,10 +369,24 @@ pub(in crate::completion) fn try_extract_instanceof<'b>(
 ///   - `$var::class === ClassName::class` or `==` — exact class match
 ///
 /// Handles arbitrary parenthesisation.
+/// Result of extracting an instanceof-style check from an expression.
+///
+/// - `class_name`: the class being checked against
+/// - `negated`: `true` when the check is negated (e.g. `!($x instanceof Foo)`)
+/// - `exact`: `true` for exact class identity checks (`get_class($x) === Foo::class`,
+///   `$x::class === Foo::class`) where subclasses should NOT be preserved.
+///   `false` for `instanceof` / `is_a()` checks where a more-specific subtype
+///   in the current results should be kept.
+pub(in crate::completion) struct InstanceofExtraction {
+    pub class_name: String,
+    pub negated: bool,
+    pub exact: bool,
+}
+
 pub(in crate::completion) fn try_extract_instanceof_with_negation<'b>(
     expr: &'b Expression<'b>,
     var_name: &str,
-) -> Option<(String, bool)> {
+) -> Option<InstanceofExtraction> {
     match expr {
         Expression::Parenthesized(inner) => {
             try_extract_instanceof_with_negation(inner.expression, var_name)
@@ -280,20 +395,36 @@ pub(in crate::completion) fn try_extract_instanceof_with_negation<'b>(
             // `!expr` — recurse so that `!!expr` (double negation) and
             // deeper chains like `!!!expr` are handled correctly: each
             // `!` flips the negation flag.
-            try_extract_instanceof_with_negation(prefix.operand, var_name)
-                .map(|(cls, neg)| (cls, !neg))
+            try_extract_instanceof_with_negation(prefix.operand, var_name).map(|mut e| {
+                e.negated = !e.negated;
+                e
+            })
         }
         _ => {
             try_extract_instanceof(expr, var_name)
-                .map(|cls| (cls, false))
+                .map(|cls| InstanceofExtraction {
+                    class_name: cls,
+                    negated: false,
+                    exact: false,
+                })
                 .or_else(|| {
                     // `is_a($var, ClassName::class)` — equivalent to instanceof
-                    try_extract_is_a(expr, var_name).map(|cls| (cls, false))
+                    try_extract_is_a(expr, var_name).map(|cls| InstanceofExtraction {
+                        class_name: cls,
+                        negated: false,
+                        exact: false,
+                    })
                 })
                 .or_else(|| {
                     // `get_class($var) === ClassName::class` or
                     // `$var::class === ClassName::class` — exact class match
-                    try_extract_class_identity_check(expr, var_name)
+                    try_extract_class_identity_check(expr, var_name).map(|(cls, neg)| {
+                        InstanceofExtraction {
+                            class_name: cls,
+                            negated: neg,
+                            exact: true,
+                        }
+                    })
                 })
         }
     }
@@ -566,7 +697,7 @@ pub(in crate::completion) fn try_apply_custom_assert_narrowing(
             if assertion.negated {
                 apply_instanceof_exclusion(&effective_type, ctx, results);
             } else {
-                apply_instanceof_inclusion(&effective_type, ctx, results);
+                apply_instanceof_inclusion(&effective_type, false, ctx, results);
             }
         }
     }
@@ -714,7 +845,7 @@ pub(in crate::completion) fn try_apply_assert_condition_narrowing(
             if should_exclude {
                 apply_instanceof_exclusion(&assertion.asserted_type, ctx, results);
             } else {
-                apply_instanceof_inclusion(&assertion.asserted_type, ctx, results);
+                apply_instanceof_inclusion(&assertion.asserted_type, false, ctx, results);
             }
         }
     }
@@ -800,11 +931,11 @@ pub(in crate::completion) fn try_apply_assert_instanceof_narrowing(
         return;
     }
 
-    if let Some((cls_name, negated)) = try_extract_assert_instanceof(expr, ctx.var_name) {
-        if negated {
-            apply_instanceof_exclusion(&cls_name, ctx, results);
+    if let Some(extraction) = try_extract_assert_instanceof(expr, ctx.var_name) {
+        if extraction.negated {
+            apply_instanceof_exclusion(&extraction.class_name, ctx, results);
         } else {
-            apply_instanceof_inclusion(&cls_name, ctx, results);
+            apply_instanceof_inclusion(&extraction.class_name, extraction.exact, ctx, results);
         }
     }
 }
@@ -817,7 +948,7 @@ pub(in crate::completion) fn try_apply_assert_instanceof_narrowing(
 fn try_extract_assert_instanceof<'b>(
     expr: &'b Expression<'b>,
     var_name: &str,
-) -> Option<(String, bool)> {
+) -> Option<InstanceofExtraction> {
     // Unwrap parenthesised wrapper on the whole expression
     let expr = match expr {
         Expression::Parenthesized(inner) => inner.expression,
@@ -923,13 +1054,18 @@ pub(in crate::completion) fn try_apply_match_true_narrowing(
             }
             // Check each condition in this arm (comma-separated)
             for condition in expr_arm.conditions.iter() {
-                if let Some((cls_name, negated)) =
+                if let Some(extraction) =
                     try_extract_instanceof_with_negation(condition, ctx.var_name)
                 {
-                    if negated {
-                        apply_instanceof_exclusion(&cls_name, ctx, results);
+                    if extraction.negated {
+                        apply_instanceof_exclusion(&extraction.class_name, ctx, results);
                     } else {
-                        apply_instanceof_inclusion(&cls_name, ctx, results);
+                        apply_instanceof_inclusion(
+                            &extraction.class_name,
+                            extraction.exact,
+                            ctx,
+                            results,
+                        );
                     }
                 }
             }
@@ -968,24 +1104,34 @@ pub(in crate::completion) fn try_apply_ternary_instanceof_narrowing(
             };
 
             if in_then {
-                if let Some((cls_name, negated)) =
+                if let Some(extraction) =
                     try_extract_instanceof_with_negation(cond_expr.condition, ctx.var_name)
                 {
-                    if negated {
-                        apply_instanceof_exclusion(&cls_name, ctx, results);
+                    if extraction.negated {
+                        apply_instanceof_exclusion(&extraction.class_name, ctx, results);
                     } else {
-                        apply_instanceof_inclusion(&cls_name, ctx, results);
+                        apply_instanceof_inclusion(
+                            &extraction.class_name,
+                            extraction.exact,
+                            ctx,
+                            results,
+                        );
                     }
                 }
             } else if in_else
-                && let Some((cls_name, negated)) =
+                && let Some(extraction) =
                     try_extract_instanceof_with_negation(cond_expr.condition, ctx.var_name)
             {
                 // Flip polarity for the else branch.
-                if negated {
-                    apply_instanceof_inclusion(&cls_name, ctx, results);
+                if extraction.negated {
+                    apply_instanceof_inclusion(
+                        &extraction.class_name,
+                        extraction.exact,
+                        ctx,
+                        results,
+                    );
                 } else {
-                    apply_instanceof_exclusion(&cls_name, ctx, results);
+                    apply_instanceof_exclusion(&extraction.class_name, ctx, results);
                 }
             }
 
@@ -1205,15 +1351,14 @@ pub(in crate::completion) fn apply_guard_clause_narrowing(
     // ── instanceof / is_a / get_class / ::class narrowing ──
     // The then-body exits, so subsequent code is the "else" — apply
     // the inverse of the condition.
-    if let Some((cls_name, negated)) =
-        try_extract_instanceof_with_negation(if_stmt.condition, ctx.var_name)
+    if let Some(extraction) = try_extract_instanceof_with_negation(if_stmt.condition, ctx.var_name)
     {
         // Positive instanceof + exit → exclude after (var is NOT that class)
         // Negated instanceof + exit → include after (var IS that class)
-        if negated {
-            apply_instanceof_inclusion(&cls_name, ctx, results);
+        if extraction.negated {
+            apply_instanceof_inclusion(&extraction.class_name, extraction.exact, ctx, results);
         } else {
-            apply_instanceof_exclusion(&cls_name, ctx, results);
+            apply_instanceof_exclusion(&extraction.class_name, ctx, results);
         }
     }
 
@@ -1247,7 +1392,7 @@ pub(in crate::completion) fn apply_guard_clause_narrowing(
                 if should_exclude {
                     apply_instanceof_exclusion(&assertion.asserted_type, ctx, results);
                 } else {
-                    apply_instanceof_inclusion(&assertion.asserted_type, ctx, results);
+                    apply_instanceof_inclusion(&assertion.asserted_type, false, ctx, results);
                 }
             }
         }
@@ -1435,9 +1580,11 @@ fn collect_negated_and_instanceof_classes<'b>(
         }
         _ => {
             // Each leaf must be a negated instanceof for the target variable.
-            if let Some((cls_name, true)) = try_extract_instanceof_with_negation(expr, var_name) {
-                if !out.contains(&cls_name) {
-                    out.push(cls_name);
+            if let Some(extraction) = try_extract_instanceof_with_negation(expr, var_name)
+                && extraction.negated
+            {
+                if !out.contains(&extraction.class_name) {
+                    out.push(extraction.class_name);
                 }
                 true
             } else {
@@ -1551,7 +1698,7 @@ pub(in crate::completion) fn try_apply_in_array_narrowing(
         if negated {
             apply_instanceof_exclusion(&element_type, ctx, results);
         } else {
-            apply_instanceof_inclusion(&element_type, ctx, results);
+            apply_instanceof_inclusion(&element_type, false, ctx, results);
         }
     }
 }
@@ -1577,7 +1724,7 @@ pub(in crate::completion) fn try_apply_in_array_narrowing_inverse(
     {
         // Flip polarity for the else branch.
         if negated {
-            apply_instanceof_inclusion(&element_type, ctx, results);
+            apply_instanceof_inclusion(&element_type, false, ctx, results);
         } else {
             apply_instanceof_exclusion(&element_type, ctx, results);
         }
@@ -1613,7 +1760,7 @@ pub(in crate::completion) fn apply_guard_clause_in_array_narrowing(
         // Positive in_array + exit → exclude (var is NOT in haystack)
         // Negated in_array + exit → include (var IS in haystack)
         if condition_negated {
-            apply_instanceof_inclusion(&element_type, ctx, results);
+            apply_instanceof_inclusion(&element_type, false, ctx, results);
         } else {
             apply_instanceof_exclusion(&element_type, ctx, results);
         }

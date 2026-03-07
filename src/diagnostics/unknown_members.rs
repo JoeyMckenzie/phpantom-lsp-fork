@@ -1683,4 +1683,180 @@ function process(\stdClass $obj): void {
             diags
         );
     }
+
+    #[test]
+    fn no_diagnostic_for_phpdoc_property_on_child_class() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+abstract class ZooBase
+{
+    public function falcon(): string { return ''; }
+}
+
+/**
+ * @property string $gorilla
+ * @method bool hyena(string $x)
+ */
+class Zoo extends ZooBase
+{
+    public function __get(string $name): mixed { return null; }
+    public function __call(string $name, array $args): mixed { return null; }
+}
+
+function test(): void {
+    $zoo = new Zoo();
+    $zoo->gorilla;
+    $zoo->hyena('x');
+    $zoo->falcon();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected for @property/@method on child class with parent, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn no_diagnostic_for_phpdoc_property_from_interface() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+/**
+ * @property-read string $iguana
+ * @method string jaguar()
+ */
+interface ZooContract {}
+
+abstract class ZooBase
+{
+    public function falcon(): string { return ''; }
+}
+
+/**
+ * @property string $gorilla
+ * @method bool hyena(string $x)
+ */
+class Zoo extends ZooBase implements ZooContract
+{
+    public function __get(string $name): mixed { return null; }
+    public function __call(string $name, array $args): mixed { return null; }
+}
+
+function test(): void {
+    $zoo = new Zoo();
+    $zoo->gorilla;
+    $zoo->hyena('x');
+    $zoo->iguana;
+    $zoo->jaguar();
+    $zoo->falcon();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected for @property/@method from class and interface, got: {:?}",
+            diags
+        );
+    }
+
+    /// Mirrors the exact pattern from `example.php` `runDemoAssertions()`:
+    /// `$zoo->gorilla` inside an `assert(... === ...)` expression, with
+    /// the Zoo class defined in a namespace.
+    #[test]
+    fn no_diagnostic_for_phpdoc_members_inside_assert() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+namespace Demo;
+
+/**
+ * @property-read string $iguana
+ * @method string jaguar()
+ */
+interface ZooContract {}
+
+abstract class ZooBase
+{
+    public function falcon(): string { return ''; }
+}
+
+/**
+ * @property string $gorilla
+ * @method bool hyena(string $x)
+ */
+class Zoo extends ZooBase implements ZooContract
+{
+    public function __get(string $name): mixed { return null; }
+    public function __call(string $name, array $args): mixed { return null; }
+}
+
+function runTest(): void {
+    $zoo = new Zoo();
+    assert($zoo->gorilla === 'gorilla-value');
+    assert($zoo->iguana === 'iguana-value');
+    assert($zoo->hyena('x') === true);
+    assert($zoo->jaguar() === 'jaguar-value');
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected for @property/@method members inside assert(), got: {:?}",
+            diags
+        );
+    }
+
+    /// When `assert($zoo instanceof ZooBase)` narrows `$zoo` to ZooBase,
+    /// subsequent `$zoo->gorilla` should still find @property/@method
+    /// from the original `Zoo` class (or at least not false-positive
+    /// because ZooBase has `__get`/`__call` via its child).
+    #[test]
+    fn no_diagnostic_for_phpdoc_members_after_instanceof_narrowing() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+namespace Demo;
+
+/**
+ * @property-read string $iguana
+ * @method string jaguar()
+ */
+interface ZooContract {}
+
+abstract class ZooBase
+{
+    public function falcon(): string { return ''; }
+}
+
+/**
+ * @property string $gorilla
+ * @method bool hyena(string $x)
+ */
+class Zoo extends ZooBase implements ZooContract
+{
+    public function __get(string $name): mixed { return null; }
+    public function __call(string $name, array $args): mixed { return null; }
+}
+
+function runTest(): void {
+    $zoo = new Zoo();
+    assert($zoo instanceof Zoo);
+    assert($zoo instanceof ZooBase);
+    $zoo->gorilla;
+    $zoo->iguana;
+    $zoo->hyena('x');
+    $zoo->jaguar();
+    $zoo->falcon();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected for @property/@method after instanceof narrowing, got: {:?}",
+            diags
+        );
+    }
 }
