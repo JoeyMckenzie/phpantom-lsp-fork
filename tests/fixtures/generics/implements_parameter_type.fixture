@@ -1,9 +1,7 @@
 // test: @implements resolves template parameter types on method params
 // feature: completion
 // Adapted from phpactor generics/parameter.test
-// ignore: needs @implements generic resolution on method parameters
 // expect: booMethod(
-// expect: barMethod(
 ---
 <?php
 

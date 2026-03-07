@@ -584,40 +584,6 @@ type:
 
 ---
 
-## 17. `@implements` generic resolution
-**Impact: Medium-High · Effort: Medium**
-
-When a class declares `@implements SomeInterface<ConcreteType>`, the
-generic parameters should be substituted into inherited interface
-methods. This works for `@extends` on classes but the `@implements`
-path is not wired up.
-
-**Example:**
-
-```php
-/** @template T */
-interface Repository {
-    /** @return T */
-    public function find(int $id);
-}
-
-/** @implements Repository<User> */
-class UserRepository implements Repository {
-    public function find(int $id) { /* ... */ }
-}
-
-$repo = new UserRepository();
-$repo->find(1); // should resolve to User
-```
-
-A related variant is `@implements` through an extended interface chain
-with key+value types (e.g. `@implements IteratorAggregate<string, Item>`).
-
-**Discovered via:** fixture conversion (class_implements_single,
-class_implements_multiple, implements_parameter_type).
-
----
-
 ## 18. `@phpstan-assert` on static method calls
 **Impact: Medium · Effort: Medium**
 

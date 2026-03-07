@@ -1,8 +1,7 @@
 // test: @template-implements resolves interface generic parameter
 // feature: completion
 // Adapted from phpactor generics/class_template_implements1.test
-// ignore: @implements generic resolution not yet supported
-// expect: boo(
+// expect: bazMethod(
 ---
 <?php
 

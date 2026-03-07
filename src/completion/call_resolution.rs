@@ -701,10 +701,17 @@ impl Backend {
 
         // First check the class itself
         if let Some(method) = class_info.methods.iter().find(|m| m.name == method_name) {
-            return resolve_method(method);
+            let result = resolve_method(method);
+            if !result.is_empty() {
+                return result;
+            }
+            // Fall through to the merged class — the method may lack a
+            // return type here but have one filled in from an interface
+            // via `@implements` generic resolution.
         }
 
-        // Walk up the inheritance chain
+        // Walk up the inheritance chain (also merges interface members
+        // with `@implements` generic substitutions applied).
         let merged = crate::virtual_members::resolve_class_fully_maybe_cached(
             class_info,
             class_loader,

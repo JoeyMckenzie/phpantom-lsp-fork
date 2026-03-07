@@ -16,6 +16,7 @@ use mago_syntax::ast::*;
 use crate::docblock;
 use crate::parser::{extract_hint_string, with_parsed_program};
 use crate::types::ClassInfo;
+use crate::util::short_name;
 
 use crate::completion::resolver::FunctionLoaderFn;
 use crate::completion::variable::raw_type_inference::resolve_variable_assignment_raw_type;
@@ -58,6 +59,36 @@ pub(crate) fn resolve_variable_type_string(
         });
     if ast_result.is_some() {
         return ast_result;
+    }
+
+    // 4b. Foreach binding via class resolution.
+    //     When the AST path above found no inline docblock annotation for
+    //     the iterated expression, try resolving the foreach expression to
+    //     a class and extract the iterable element type from its
+    //     `@implements` / `@extends` generics.  This handles cases like
+    //     `@implements IteratorAggregate<array<string, Foo|Bar>>`.
+    let dummy_class;
+    let effective_class = match current_class {
+        Some(cc) => cc,
+        None => {
+            dummy_class = ClassInfo::default();
+            &dummy_class
+        }
+    };
+    let foreach_result: Option<String> =
+        with_parsed_program(content, "resolve_foreach_via_class", |program, _| {
+            resolve_foreach_type_via_class(
+                &program.statements.iter().collect::<Vec<_>>(),
+                var_name,
+                content,
+                cursor_offset,
+                effective_class,
+                all_classes,
+                class_loader,
+            )
+        });
+    if foreach_result.is_some() {
+        return foreach_result;
     }
 
     // 5. Assignment raw type
@@ -537,6 +568,415 @@ fn extract_foreach_expression_raw_type(
     }
 
     docblock::find_iterable_raw_type_in_source(content, foreach_offset, expr_text)
+}
+
+// ─── Class-resolution-based foreach type extraction ─────────────────────────
+
+/// Known iterable interface short names whose generic parameters carry
+/// the element (value) type.
+const ITERABLE_IFACE_NAMES: &[&str] = &[
+    "Iterator",
+    "IteratorAggregate",
+    "Traversable",
+    "ArrayAccess",
+    "Enumerable",
+];
+
+/// Resolve a foreach binding variable's type string by resolving the
+/// iterated expression to a class and inspecting its `@implements` /
+/// `@extends` generic annotations.
+///
+/// This is a fallback for the AST-only path (`find_type_in_foreach`)
+/// which relies on inline docblock annotations.  When no annotation
+/// is present, this function uses the class loader to resolve the
+/// iterated expression's type and extract the element type from
+/// `implements_generics` or `extends_generics`.
+fn resolve_foreach_type_via_class(
+    stmts: &[&Statement<'_>],
+    var_name: &str,
+    content: &str,
+    cursor_offset: u32,
+    current_class: &ClassInfo,
+    all_classes: &[ClassInfo],
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
+    for stmt in stmts {
+        match stmt {
+            Statement::Class(class) => {
+                let start = class.left_brace.start.offset;
+                let end = class.right_brace.end.offset;
+                if cursor_offset >= start && cursor_offset <= end {
+                    return resolve_foreach_in_members(
+                        class.members.iter(),
+                        var_name,
+                        content,
+                        cursor_offset,
+                        current_class,
+                        all_classes,
+                        class_loader,
+                    );
+                }
+            }
+            Statement::Function(func) => {
+                let body_start = func.body.left_brace.start.offset;
+                let body_end = func.body.right_brace.end.offset;
+                if cursor_offset >= body_start && cursor_offset <= body_end {
+                    let body_stmts: Vec<&Statement> = func.body.statements.iter().collect();
+                    return resolve_foreach_in_body(
+                        &body_stmts,
+                        var_name,
+                        content,
+                        cursor_offset,
+                        current_class,
+                        all_classes,
+                        class_loader,
+                    );
+                }
+            }
+            Statement::Foreach(foreach) => {
+                let stmt_span = stmt.span();
+                if cursor_offset >= stmt_span.start.offset && cursor_offset <= stmt_span.end.offset
+                {
+                    return resolve_foreach_binding_via_class(
+                        foreach,
+                        var_name,
+                        content,
+                        cursor_offset,
+                        current_class,
+                        all_classes,
+                        class_loader,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Walk class members looking for foreach bindings resolvable via class
+/// loader.
+fn resolve_foreach_in_members<'a>(
+    members: impl Iterator<Item = &'a ClassLikeMember<'a>>,
+    var_name: &str,
+    content: &str,
+    cursor_offset: u32,
+    current_class: &ClassInfo,
+    all_classes: &[ClassInfo],
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
+    for member in members {
+        if let ClassLikeMember::Method(method) = member
+            && let MethodBody::Concrete(block) = &method.body
+        {
+            let blk_start = block.left_brace.start.offset;
+            let blk_end = block.right_brace.end.offset;
+            if cursor_offset >= blk_start && cursor_offset <= blk_end {
+                let body_stmts: Vec<&Statement> = block.statements.iter().collect();
+                return resolve_foreach_in_body(
+                    &body_stmts,
+                    var_name,
+                    content,
+                    cursor_offset,
+                    current_class,
+                    all_classes,
+                    class_loader,
+                );
+            }
+        }
+    }
+    None
+}
+
+/// Walk body statements looking for foreach bindings resolvable via class
+/// loader.
+fn resolve_foreach_in_body(
+    stmts: &[&Statement<'_>],
+    var_name: &str,
+    content: &str,
+    cursor_offset: u32,
+    current_class: &ClassInfo,
+    all_classes: &[ClassInfo],
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
+    for stmt in stmts {
+        if let Statement::Foreach(foreach) = stmt {
+            let stmt_span = stmt.span();
+            if cursor_offset >= stmt_span.start.offset && cursor_offset <= stmt_span.end.offset {
+                return resolve_foreach_binding_via_class(
+                    foreach,
+                    var_name,
+                    content,
+                    cursor_offset,
+                    current_class,
+                    all_classes,
+                    class_loader,
+                );
+            }
+        }
+        // Recurse into blocks (if, while, for, etc.)
+        if let Some(inner_stmts) = extract_body_statements(stmt) {
+            let inner: Vec<&Statement> = inner_stmts.collect();
+            if let Some(result) = resolve_foreach_in_body(
+                &inner,
+                var_name,
+                content,
+                cursor_offset,
+                current_class,
+                all_classes,
+                class_loader,
+            ) {
+                return Some(result);
+            }
+        }
+    }
+    None
+}
+
+/// Extract body statements from control-flow constructs for recursion.
+fn extract_body_statements<'a, 'b>(
+    stmt: &'b Statement<'a>,
+) -> Option<Box<dyn Iterator<Item = &'b Statement<'a>> + 'b>> {
+    match stmt {
+        Statement::If(if_stmt) => {
+            let stmts: Vec<&Statement> = if_stmt.body.statements().iter().collect();
+            Some(Box::new(stmts.into_iter()))
+        }
+        Statement::While(w) => Some(Box::new(w.body.statements().iter())),
+        Statement::For(f) => Some(Box::new(f.body.statements().iter())),
+        Statement::Block(b) => Some(Box::new(b.statements.iter())),
+        _ => None,
+    }
+}
+
+/// Resolve a single foreach binding by resolving the iterated expression
+/// to a class and checking `implements_generics` / `extends_generics`.
+fn resolve_foreach_binding_via_class(
+    foreach: &Foreach<'_>,
+    var_name: &str,
+    content: &str,
+    cursor_offset: u32,
+    current_class: &ClassInfo,
+    all_classes: &[ClassInfo],
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
+    let foreach_start = foreach.foreach.span().start.offset;
+    let body_end = foreach.body.span().end.offset;
+    if cursor_offset < foreach_start || cursor_offset > body_end {
+        return None;
+    }
+
+    // Check if the cursor variable matches the foreach value or key.
+    let is_value_var = match &foreach.target {
+        ForeachTarget::Value(val) => {
+            if let Expression::Variable(Variable::Direct(dv)) = val.value {
+                dv.name == var_name
+            } else {
+                false
+            }
+        }
+        ForeachTarget::KeyValue(kv) => {
+            if let Expression::Variable(Variable::Direct(dv)) = kv.value {
+                dv.name == var_name
+            } else {
+                false
+            }
+        }
+    };
+
+    let is_key_var = match &foreach.target {
+        ForeachTarget::Value(_) => false,
+        ForeachTarget::KeyValue(kv) => {
+            if let Expression::Variable(Variable::Direct(dv)) = kv.key {
+                dv.name == var_name
+            } else {
+                false
+            }
+        }
+    };
+
+    if !is_value_var && !is_key_var {
+        // Recurse into body for nested foreach
+        let body_stmts: Vec<&Statement> = foreach.body.statements().iter().collect();
+        return resolve_foreach_in_body(
+            &body_stmts,
+            var_name,
+            content,
+            cursor_offset,
+            current_class,
+            all_classes,
+            class_loader,
+        );
+    }
+
+    // Resolve the iterated expression to classes.
+    let expr_span = foreach.expression.span();
+    let expr_start = expr_span.start.offset as usize;
+    let expr_end = expr_span.end.offset as usize;
+    let expr_text = content.get(expr_start..expr_end)?.trim();
+
+    // Resolve the expression to ClassInfo values.
+    let iterable_classes = resolve_expression_to_classes(
+        expr_text,
+        content,
+        cursor_offset,
+        current_class,
+        all_classes,
+        class_loader,
+    );
+
+    for cls in &iterable_classes {
+        let merged = crate::virtual_members::resolve_class_fully(cls, class_loader);
+        if is_value_var {
+            if let Some(value_type) =
+                extract_iterable_type_from_merged(&merged, class_loader, false)
+            {
+                return Some(value_type);
+            }
+        } else if is_key_var
+            && let Some(key_type) = extract_iterable_type_from_merged(&merged, class_loader, true)
+        {
+            return Some(key_type);
+        }
+    }
+
+    None
+}
+
+/// Resolve a simple expression text to `ClassInfo` values.
+///
+/// Handles `$var` (via `@var` docblock or assignment scanning) and
+/// `new ClassName()` patterns.
+fn resolve_expression_to_classes(
+    expr_text: &str,
+    content: &str,
+    cursor_offset: u32,
+    current_class: &ClassInfo,
+    all_classes: &[ClassInfo],
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Vec<ClassInfo> {
+    // Simple variable: try to resolve its type.
+    if expr_text.starts_with('$') && !expr_text.contains("->") && !expr_text.contains("::") {
+        // Try @var annotation.
+        if let Some(raw_type) =
+            docblock::find_var_raw_type_in_source(content, cursor_offset as usize, expr_text)
+        {
+            return crate::completion::type_resolution::type_hint_to_classes(
+                &raw_type,
+                &current_class.name,
+                all_classes,
+                class_loader,
+            );
+        }
+        // Try variable resolution.
+        let types = crate::completion::variable::resolution::resolve_variable_types(
+            expr_text,
+            current_class,
+            all_classes,
+            content,
+            cursor_offset,
+            class_loader,
+            None,
+        );
+        if !types.is_empty() {
+            return types;
+        }
+    }
+
+    vec![]
+}
+
+/// Extract the iterable value or key type from a merged class's
+/// `implements_generics` and `extends_generics`, also checking
+/// transitively through interfaces.
+fn extract_iterable_type_from_merged(
+    class: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+    is_key: bool,
+) -> Option<String> {
+    // 1. Direct check on implements_generics.
+    for (name, args) in &class.implements_generics {
+        let s = short_name(name);
+        if ITERABLE_IFACE_NAMES.contains(&s) {
+            if is_key && args.len() >= 2 {
+                return Some(args[0].clone());
+            } else if !is_key && !args.is_empty() {
+                return Some(args.last().unwrap().clone());
+            }
+        }
+    }
+
+    // 2. Check implements_generics for non-iterable interfaces that
+    //    themselves extend a known iterable interface (transitive check).
+    for (name, args) in &class.implements_generics {
+        let s = short_name(name);
+        if !ITERABLE_IFACE_NAMES.contains(&s)
+            && let Some(iface) = class_loader(name)
+            && is_transitive_iterable(&iface, class_loader)
+            && !args.is_empty()
+        {
+            if is_key && args.len() >= 2 {
+                return Some(args[0].clone());
+            } else if !is_key {
+                return Some(args.last().unwrap().clone());
+            }
+        }
+    }
+
+    // 3. Check extends_generics — but only when the parent class is
+    //    itself a known iterable or transitively extends one.
+    //    `@extends Test1<int>` does NOT describe iteration types; only
+    //    `@extends Collection<int, User>` (where Collection is iterable)
+    //    does.
+    for (name, args) in &class.extends_generics {
+        let s = short_name(name);
+        let parent_is_iterable = ITERABLE_IFACE_NAMES.contains(&s)
+            || class_loader(name)
+                .map(|p| is_transitive_iterable(&p, class_loader))
+                .unwrap_or(false);
+        if parent_is_iterable {
+            if is_key && args.len() >= 2 {
+                return Some(args[0].clone());
+            } else if !is_key && !args.is_empty() {
+                return Some(args.last().unwrap().clone());
+            }
+        }
+    }
+
+    None
+}
+
+/// Check whether an interface transitively extends a known iterable
+/// interface (e.g. `TypedCollection extends IteratorAggregate`).
+fn is_transitive_iterable(
+    iface: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> bool {
+    // Check direct interfaces.
+    for parent in &iface.interfaces {
+        let s = short_name(parent);
+        if ITERABLE_IFACE_NAMES.contains(&s) {
+            return true;
+        }
+    }
+    // Check extends_generics for the interface-extends-interface pattern.
+    for (name, _) in &iface.extends_generics {
+        let s = short_name(name);
+        if ITERABLE_IFACE_NAMES.contains(&s) {
+            return true;
+        }
+    }
+    // Check parent class (interfaces use `parent_class` for extends).
+    if let Some(ref parent_name) = iface.parent_class {
+        let s = short_name(parent_name);
+        if ITERABLE_IFACE_NAMES.contains(&s) {
+            return true;
+        }
+        if let Some(parent) = class_loader(parent_name) {
+            return is_transitive_iterable(&parent, class_loader);
+        }
+    }
+    false
 }
 
 /// Recursively search a statement for closure/arrow function parameters.

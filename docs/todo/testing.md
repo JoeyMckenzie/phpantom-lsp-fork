@@ -1,11 +1,11 @@
 # PHPantom — Ignored Fixture Tasks
 
-There are **228 fixture tests** in `tests/fixtures/`. Of these, **188
-pass** and **40 are ignored** because they exercise features or bug
+There are **228 fixture tests** in `tests/fixtures/`. Of these, **195
+pass** and **33 are ignored** because they exercise features or bug
 fixes that are not yet implemented. Each ignored fixture has a
 `// ignore:` comment explaining what is missing.
 
-This document groups the 40 ignored fixtures by the underlying work
+This document groups the 33 ignored fixtures by the underlying work
 needed to un-ignore them. Tasks are ordered by the number of fixtures
 they unblock (descending), then by estimated effort. Once a task is
 complete, remove the `// ignore:` line from each fixture, verify the
@@ -20,38 +20,6 @@ cargo clippy --tests -- -D warnings
 cargo fmt --check
 php -l example.php
 ```
-
----
-
-## 1. `@implements` generic resolution (7 fixtures)
-
-**Ref:** [type-inference.md §17](type-inference.md#17-implements-generic-resolution)
-**Impact: Medium-High · Effort: Medium**
-
-When a class declares `@implements SomeInterface<ConcreteType>`, the
-generic parameters are not substituted into inherited interface methods.
-This already works for `@extends` on classes, so the substitution
-infrastructure exists. The `@implements` path needs the same wiring.
-
-**Fixtures:**
-
-- [ ] `generics/class_implements_single.fixture` — `@implements Repo<User>` resolves `T` on method return
-- [ ] `generics/class_implements_multiple.fixture` — multiple `@implements` with different concrete types
-- [ ] `generics/class_template_implements.fixture` — `@template-implements` syntax (alias for `@implements`)
-- [ ] `generics/implements_parameter_type.fixture` — `@implements` resolves `T` on method parameters
-- [ ] `generics/iterator_aggregate_complex.fixture` — `@implements IteratorAggregate<Item>` for foreach
-- [ ] `generics/nested_iterator_chain_gh1875.fixture` — `@implements Iterator<Item>` through nested chain
-- [ ] `foreach/iterator_aggregate_key_value.fixture` — `@implements IteratorAggregate<K, V>` with key+value types
-
-**Implementation notes:**
-
-In `inheritance.rs`, `build_substitution_map` handles `@extends`
-annotations. Add the same logic for `@implements` annotations on the
-class. When merging interface methods in `resolve_class_fully_inner`
-(virtual_members), apply the substitution map from `@implements` to
-each inherited interface method's types. The `@template-implements`
-syntax should be treated as an alias, same as `@template-extends` is
-for `@extends`.
 
 ---
 

@@ -631,7 +631,10 @@ fn build_substitution_map(
 
 /// Apply generic type substitution to a method's return type and parameter
 /// type hints.
-fn apply_substitution_to_method(method: &mut MethodInfo, subs: &HashMap<String, String>) {
+pub(crate) fn apply_substitution_to_method(
+    method: &mut MethodInfo,
+    subs: &HashMap<String, String>,
+) {
     if let Some(ref mut ret) = method.return_type {
         let substituted = apply_substitution(ret, subs);
         if substituted != *ret {
@@ -686,7 +689,10 @@ pub(crate) fn apply_substitution_to_conditional(
 }
 
 /// Apply generic type substitution to a property's type hint.
-fn apply_substitution_to_property(property: &mut PropertyInfo, subs: &HashMap<String, String>) {
+pub(crate) fn apply_substitution_to_property(
+    property: &mut PropertyInfo,
+    subs: &HashMap<String, String>,
+) {
     if let Some(ref mut hint) = property.type_hint {
         let substituted = apply_substitution(hint, subs);
         if substituted != *hint {

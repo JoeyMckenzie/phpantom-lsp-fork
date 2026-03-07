@@ -1,7 +1,6 @@
 // test: IteratorAggregate with complex nested generic type resolves in foreach
 // feature: hover
 // Adapted from phpactor generics/iterator_aggregate2.test
-// ignore: needs @implements generic resolution and IteratorAggregate foreach support, todo.md §4
 // expect_hover: $bar => array<string, Foo|Bar>
 ---
 <?php

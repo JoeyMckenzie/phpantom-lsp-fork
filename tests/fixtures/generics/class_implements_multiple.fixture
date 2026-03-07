@@ -1,6 +1,5 @@
 // test: multiple @implements annotations resolve separate template parameters
 // feature: completion
-// ignore: @implements generic resolution not yet supported
 // Adapted from phpactor generics/class_implements_multiple1.test
 // expect: barResult(
 ---

@@ -1,7 +1,6 @@
 // test: IteratorAggregate with key and value generic types resolves value in foreach
 // feature: completion
 // Adapted from phpactor generics/iterator_aggregate2.test
-// ignore: needs @implements generic resolution through extended interface chain with key+value types
 // expect: execute(
 ---
 <?php

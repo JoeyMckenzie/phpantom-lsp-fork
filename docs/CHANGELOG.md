@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Enum case properties.** Completing on an enum case variable (`$case->`) now shows `name` (on all enums) and `value` (on backed enums) inherited from the `UnitEnum` and `BackedEnum` interfaces.
+- **`@implements` generic resolution.** When a class declares `@implements SomeInterface<ConcreteType>`, template parameters on the interface's methods and properties are now substituted with the concrete types. Works with `@template-implements` and `@phpstan-implements` aliases, multiple `@implements` annotations on the same class, parameter type substitution (not just return types), and chained resolution through parent classes (e.g. `Test2 extends Test1<int>` where `Test1` has `@implements Iterator<TKey, string>`). Foreach iteration over classes implementing generic iterable interfaces (including through intermediate interface chains like `TypedCollection extends IteratorAggregate`) now resolves value and key types correctly.
 
 ### Fixed
 

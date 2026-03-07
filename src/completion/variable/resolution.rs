@@ -369,6 +369,43 @@ fn resolve_variable_in_members<'b>(
                             break;
                         }
                     }
+
+                    // Neither native hint nor docblock resolved.
+                    // Check the fully-resolved class (with interface
+                    // members merged and `@implements` generics applied)
+                    // for a more specific parameter type.  This handles
+                    // cases where the class declares `map(object $entity)`
+                    // but the interface has `@param TEntity $entity` with
+                    // `@implements Interface<Boo>` substituting `TEntity`.
+                    let method_name = method.name.value.to_string();
+                    let merged = crate::virtual_members::resolve_class_fully_maybe_cached(
+                        ctx.current_class,
+                        ctx.class_loader,
+                        ctx.resolved_class_cache,
+                    );
+                    if let Some(merged_method) =
+                        merged.methods.iter().find(|m| m.name == method_name)
+                    {
+                        // Find the matching parameter by name.
+                        // ParameterInfo.name includes the `$` prefix.
+                        if let Some(merged_param) = merged_method
+                            .parameters
+                            .iter()
+                            .find(|p| p.name == ctx.var_name)
+                            && let Some(ref hint) = merged_param.type_hint
+                        {
+                            let resolved = crate::completion::type_resolution::type_hint_to_classes(
+                                hint,
+                                &ctx.current_class.name,
+                                ctx.all_classes,
+                                ctx.class_loader,
+                            );
+                            if !resolved.is_empty() {
+                                param_results = resolved;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 

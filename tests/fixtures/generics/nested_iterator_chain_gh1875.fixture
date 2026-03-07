@@ -1,23 +1,15 @@
 // test: nested generic iterator chain resolves value type through extends and implements
 // feature: hover
 // Adapted from phpactor generics/gh-1875.test
-// ignore: needs @implements generic resolution and Iterator foreach support, todo.md §4
 // expect_hover: $value => string
 ---
 <?php
 
 /**
  * @template TKey
- * @template TValue
+ * @implements Iterator<TKey, string>
  */
-interface MyIterator {
-}
-
-/**
- * @template TKey
- * @implements MyIterator<TKey, string>
- */
-abstract class Test1 implements MyIterator
+abstract class Test1 implements Iterator
 {
 }
 

@@ -305,6 +305,26 @@ class GenericsDemo
 }
 
 
+// ── @implements Generic Resolution ─────────────────────────────────────────
+
+class ImplementsGenericDemo
+{
+    public function demo(): void
+    {
+        $repo = new PenStorage();
+        $repo->find(1)->write();                  // @implements Storage<Pen> → Pen
+
+        $penCatalog = new PenCatalog();
+        $penCatalog->find(1)->write();            // @template-implements alias
+
+        $items = new ItemIterableCollection();
+        foreach ($items as $item) {
+            $item->write();                       // @implements IteratorAggregate<Pen>
+        }
+    }
+}
+
+
 // ── Conditional Return Types ────────────────────────────────────────────────
 
 class ConditionalReturnDemo
@@ -2676,6 +2696,47 @@ class CachingPenRepository extends PenRepository
 {
     public function clearCache(): void {}
 }
+
+// ─── @implements Generic Resolution ─────────────────────────────────────────
+
+/**
+ * @template TEntity
+ */
+interface Storage
+{
+    /** @return TEntity */
+    public function find(int $id);
+
+    /** @return TEntity[] */
+    public function findAll();
+}
+
+/** @implements Storage<Pen> */
+class PenStorage implements Storage
+{
+    public function find(int $id) { return new Pen(); }
+    public function findAll() { return [new Pen()]; }
+}
+
+/** @template-implements Storage<Pen> */
+class PenCatalog implements Storage
+{
+    public function find(int $id) { return new Pen(); }
+    public function findAll() { return [new Pen()]; }
+}
+
+/**
+ * @template T
+ * @implements \IteratorAggregate<int, T>
+ */
+class IterableCollection implements \IteratorAggregate
+{
+    /** @return \ArrayIterator<int, T> */
+    public function getIterator(): \ArrayIterator { return new \ArrayIterator([]); }
+}
+
+/** @extends IterableCollection<Pen> */
+class ItemIterableCollection extends IterableCollection {}
 
 /**
  * @template TKey of array-key

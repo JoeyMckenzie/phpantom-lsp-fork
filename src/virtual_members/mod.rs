@@ -54,8 +54,12 @@ pub mod phpdoc;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::inheritance::resolve_class_with_inheritance;
+use crate::inheritance::{
+    apply_substitution, apply_substitution_to_method, apply_substitution_to_property,
+    resolve_class_with_inheritance,
+};
 use crate::types::{ClassInfo, ConstantInfo, MethodInfo, PropertyInfo};
+use crate::util::short_name;
 
 /// Cache key for [`ResolvedClassCache`]: fully-qualified class name
 /// paired with the concrete generic type arguments used at this
@@ -362,76 +366,155 @@ fn resolve_class_fully_inner(
     //    extends chain, then fully resolve each interface (which applies
     //    its own virtual member providers) and merge any members that
     //    don't already exist.
+    //
+    //    When a class declares `@implements SomeInterface<ConcreteType>`,
+    //    the interface's template parameters are substituted with the
+    //    concrete types before merging.  This mirrors how `@extends`
+    //    generics are handled in the parent chain walk.  Substitutions
+    //    from `@implements` on parent classes are also collected, with
+    //    the `@extends` chain substitutions applied so that template
+    //    parameters from intermediate classes resolve correctly.
     let mut all_iface_names: Vec<String> = class.interfaces.clone();
+
+    // Collect all `@implements` generics from the class and its parent
+    // chain.  As we walk up the `extends` chain we apply the active
+    // substitution map so that template parameter references in parent
+    // `@implements` annotations resolve to concrete types.
+    //
+    // For example, given:
+    //   class Test1<TKey> implements MyIterator<TKey, string>
+    //   class Test2 extends Test1<int>
+    //
+    // Walking from Test2: active_subs starts empty, then after loading
+    // Test1 we get {TKey => int}.  Test1's `@implements MyIterator<TKey, string>`
+    // becomes `@implements MyIterator<int, string>` after substitution.
+    let mut all_implements_generics: Vec<(String, Vec<String>)> = class.implements_generics.clone();
     {
         let mut current = class.clone();
         let mut depth = 0u32;
+        let mut active_subs: HashMap<String, String> = HashMap::new();
+
+        // Seed initial subs from the root class's @extends generics
+        // so that if the root class itself has template params referenced
+        // in its @implements, they can be resolved.
+
         while let Some(ref parent_name) = current.parent_class {
             depth += 1;
             if depth > 20 {
                 break;
             }
             if let Some(parent) = class_loader(parent_name) {
+                // Build the substitution map for this parent level,
+                // mirroring the logic in resolve_class_with_inheritance.
+                let parent_short = short_name(&parent.name);
+                let type_args = current
+                    .extends_generics
+                    .iter()
+                    .chain(current.implements_generics.iter())
+                    .find(|(name, _)| short_name(name) == parent_short)
+                    .map(|(_, args)| args);
+
+                let mut level_subs = if let Some(args) = type_args {
+                    let mut map = HashMap::new();
+                    for (i, param_name) in parent.template_params.iter().enumerate() {
+                        if let Some(arg) = args.get(i) {
+                            let resolved = if active_subs.is_empty() {
+                                arg.clone()
+                            } else {
+                                apply_substitution(arg, &active_subs)
+                            };
+                            map.insert(param_name.clone(), resolved);
+                        }
+                    }
+                    map
+                } else {
+                    active_subs.clone()
+                };
+
+                // If no explicit @extends generics matched but there are
+                // active subs, carry them forward.
+                if level_subs.is_empty() && !active_subs.is_empty() {
+                    level_subs = active_subs.clone();
+                }
+
                 for iface in &parent.interfaces {
                     if !all_iface_names.contains(iface) {
                         all_iface_names.push(iface.clone());
                     }
                 }
+
+                // Collect parent's @implements generics with substitutions
+                // applied so that template params resolve to concrete types.
+                for (iface_name, args) in &parent.implements_generics {
+                    let resolved_args: Vec<String> = if level_subs.is_empty() {
+                        args.clone()
+                    } else {
+                        args.iter()
+                            .map(|a| apply_substitution(a, &level_subs))
+                            .collect()
+                    };
+                    all_implements_generics.push((iface_name.clone(), resolved_args));
+                }
+
+                active_subs = level_subs;
                 current = parent;
             } else {
                 break;
             }
         }
     }
+
     for iface_name in &all_iface_names {
         if let Some(iface) = class_loader(iface_name) {
-            // Use the cache for interface resolution too — many classes
-            // implement the same interfaces (e.g. Countable, Iterator)
-            // and this avoids re-resolving them every time.
-            let iface_key: ResolvedClassCacheKey = (class_fqn(&iface), Vec::new());
-            if let Some(c) = cache
-                && let Ok(map) = c.lock()
-                && let Some(cached) = map.get(&iface_key)
-            {
-                let resolved_iface = cached.clone();
-                drop(map);
-                for method in &resolved_iface.methods {
-                    if !merged.methods.iter().any(|m| m.name == method.name) {
-                        merged.methods.push(method.clone());
-                    }
+            // Build a substitution map from `@implements` generics for
+            // this interface.  If the class (or a parent) declared
+            // `@implements ThisInterface<Type1, Type2>`, map the
+            // interface's template params to those concrete types.
+            let iface_subs =
+                build_implements_substitution_map(iface_name, &iface, &all_implements_generics);
+
+            // When we have substitutions to apply, we cannot use a
+            // cached bare-interface resolution because the cached version
+            // has unsubstituted template parameters.  Only use the cache
+            // for interfaces without generic substitutions.
+            if iface_subs.is_empty() {
+                let iface_key: ResolvedClassCacheKey = (class_fqn(&iface), Vec::new());
+                if let Some(c) = cache
+                    && let Ok(map) = c.lock()
+                    && let Some(cached) = map.get(&iface_key)
+                {
+                    let resolved_iface = cached.clone();
+                    drop(map);
+                    merge_interface_members_into(&mut merged, resolved_iface, &iface_subs);
+                    continue;
                 }
-                for property in &resolved_iface.properties {
-                    if !merged.properties.iter().any(|p| p.name == property.name) {
-                        merged.properties.push(property.clone());
-                    }
-                }
-                for constant in &resolved_iface.constants {
-                    if !merged.constants.iter().any(|c| c.name == constant.name) {
-                        merged.constants.push(constant.clone());
-                    }
-                }
-                continue;
             }
 
             let mut resolved_iface = resolve_class_with_inheritance(&iface, class_loader);
             if !providers.is_empty() {
                 apply_virtual_members(&mut resolved_iface, class_loader, &providers, cache);
             }
-            for method in resolved_iface.methods {
-                if !merged.methods.iter().any(|m| m.name == method.name) {
-                    merged.methods.push(method);
-                }
-            }
-            for property in resolved_iface.properties {
-                if !merged.properties.iter().any(|p| p.name == property.name) {
-                    merged.properties.push(property);
-                }
-            }
-            for constant in resolved_iface.constants {
-                if !merged.constants.iter().any(|c| c.name == constant.name) {
-                    merged.constants.push(constant);
-                }
-            }
+
+            merge_interface_members_into(&mut merged, resolved_iface, &iface_subs);
+        }
+    }
+
+    // Store the accumulated `@implements` generics (with `@extends`
+    // chain substitutions applied) on the merged class so that
+    // downstream consumers like foreach resolution can see generics
+    // from parent classes too.  For example, when `Test2 extends
+    // Test1<int>` and `Test1` has `@implements MyIterator<TKey, string>`,
+    // the merged Test2 class gets `implements_generics` containing
+    // `("MyIterator", ["int", "string"])`.
+    for (name, args) in &all_implements_generics {
+        if !merged
+            .implements_generics
+            .iter()
+            .any(|(n, _)| short_name(n) == short_name(name))
+        {
+            merged
+                .implements_generics
+                .push((name.clone(), args.clone()));
         }
     }
 
@@ -443,6 +526,116 @@ fn resolve_class_fully_inner(
     }
 
     merged
+}
+
+/// Merge resolved interface members into a class, applying `@implements`
+/// generic substitutions.
+///
+/// For methods and properties that already exist on the class, this fills
+/// in missing type information from the interface declaration.  When a
+/// class declares `boo()` with no return type but the interface has
+/// `@return Y`, the substituted interface return type is applied to the
+/// class method.  Similarly, parameter docblock types from the interface
+/// are applied when the class parameter lacks a type hint or has a
+/// less-specific native hint (e.g. `object`) while the interface provides
+/// a concrete docblock type.
+///
+/// Members that don't already exist on the class are added directly.
+fn merge_interface_members_into(
+    merged: &mut ClassInfo,
+    mut resolved_iface: ClassInfo,
+    iface_subs: &HashMap<String, String>,
+) {
+    // Apply @implements generic substitutions to the resolved
+    // interface members before merging.
+    if !iface_subs.is_empty() {
+        for method in &mut resolved_iface.methods {
+            apply_substitution_to_method(method, iface_subs);
+        }
+        for property in &mut resolved_iface.properties {
+            apply_substitution_to_property(property, iface_subs);
+        }
+    }
+
+    for iface_method in resolved_iface.methods {
+        if let Some(existing) = merged
+            .methods
+            .iter_mut()
+            .find(|m| m.name == iface_method.name)
+        {
+            // Fill in missing return type from the interface.
+            if existing.return_type.is_none() && iface_method.return_type.is_some() {
+                existing.return_type = iface_method.return_type;
+            }
+            // Fill in parameter docblock types from the interface.
+            // When the class parameter's type_hint equals its native_type_hint
+            // (meaning no @param docblock override was applied on the class),
+            // the interface's substituted type is more specific and should
+            // be used.  This handles cases like `map(object $entity)` where
+            // the interface declares `@param TEntity $entity` and @implements
+            // substitutes `TEntity` → `Boo`.
+            for (existing_param, iface_param) in
+                existing.parameters.iter_mut().zip(&iface_method.parameters)
+            {
+                let has_own_docblock_type = existing_param.type_hint.is_some()
+                    && existing_param.type_hint != existing_param.native_type_hint;
+                if !has_own_docblock_type && iface_param.type_hint.is_some() {
+                    existing_param.type_hint = iface_param.type_hint.clone();
+                }
+            }
+        } else {
+            merged.methods.push(iface_method);
+        }
+    }
+    for property in resolved_iface.properties {
+        if !merged.properties.iter().any(|p| p.name == property.name) {
+            merged.properties.push(property);
+        }
+    }
+    for constant in resolved_iface.constants {
+        if !merged.constants.iter().any(|c| c.name == constant.name) {
+            merged.constants.push(constant);
+        }
+    }
+}
+
+/// Build a substitution map for an interface based on collected
+/// `@implements` generics.
+///
+/// Searches `all_implements_generics` for an entry whose class name
+/// matches `iface_name` (by short name comparison), then zips the
+/// type arguments with the interface's `template_params`.
+///
+/// Returns an empty map if no matching `@implements` annotation exists
+/// or if the interface has no template parameters.
+fn build_implements_substitution_map(
+    iface_name: &str,
+    iface: &ClassInfo,
+    all_implements_generics: &[(String, Vec<String>)],
+) -> HashMap<String, String> {
+    if iface.template_params.is_empty() || all_implements_generics.is_empty() {
+        return HashMap::new();
+    }
+
+    let iface_short = short_name(iface_name);
+
+    let type_args = all_implements_generics
+        .iter()
+        .find(|(name, _)| short_name(name) == iface_short)
+        .map(|(_, args)| args);
+
+    let type_args = match type_args {
+        Some(args) => args,
+        None => return HashMap::new(),
+    };
+
+    let mut map = HashMap::new();
+    for (i, param_name) in iface.template_params.iter().enumerate() {
+        if let Some(arg) = type_args.get(i) {
+            map.insert(param_name.clone(), arg.clone());
+        }
+    }
+    map
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

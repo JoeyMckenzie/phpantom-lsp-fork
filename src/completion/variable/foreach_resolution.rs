@@ -160,7 +160,9 @@ pub(in crate::completion) fn try_resolve_foreach_value_type<'b>(
             ctx.class_loader,
             ctx.resolved_class_cache,
         );
-        if let Some(value_type) = extract_iterable_element_type_from_class(&merged) {
+        if let Some(value_type) =
+            extract_iterable_element_type_from_class(&merged, ctx.class_loader)
+        {
             push_foreach_resolved_types(&value_type, ctx, results, conditional);
             return;
         }
@@ -261,7 +263,7 @@ pub(in crate::completion) fn try_resolve_foreach_key_type<'b>(
             ctx.class_loader,
             ctx.resolved_class_cache,
         );
-        if let Some(key_type) = extract_iterable_key_type_from_class(&merged) {
+        if let Some(key_type) = extract_iterable_key_type_from_class(&merged, ctx.class_loader) {
             push_foreach_resolved_types(&key_type, ctx, results, conditional);
             return;
         }
@@ -352,11 +354,31 @@ const ITERABLE_IFACE_NAMES: &[&str] = &[
 /// Returns `None` when no generic iterable annotation is found or
 /// when the element type is a scalar (scalars have no completable
 /// members).
-fn extract_iterable_element_type_from_class(class: &ClassInfo) -> Option<String> {
+fn extract_iterable_element_type_from_class(
+    class: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
     // 1. Check implements_generics for known iterable interfaces.
     for (name, args) in &class.implements_generics {
         let short = short_name(name);
         if ITERABLE_IFACE_NAMES.contains(&short) && !args.is_empty() {
+            let value = args.last().unwrap();
+            if !docblock::types::is_scalar(value) {
+                return Some(value.clone());
+            }
+        }
+    }
+
+    // 1b. Check implements_generics for interfaces that transitively
+    //     extend a known iterable interface (e.g. `TypedCollection`
+    //     extends `IteratorAggregate`).
+    for (name, args) in &class.implements_generics {
+        let short = short_name(name);
+        if !ITERABLE_IFACE_NAMES.contains(&short)
+            && !args.is_empty()
+            && let Some(iface) = class_loader(name)
+            && is_transitive_iterable(&iface, class_loader)
+        {
             let value = args.last().unwrap();
             if !docblock::types::is_scalar(value) {
                 return Some(value.clone());
@@ -386,11 +408,30 @@ fn extract_iterable_element_type_from_class(class: &ClassInfo) -> Option<String>
 /// Returns `None` when no suitable annotation is found or when only a
 /// single type parameter is present (single-param generics have an
 /// implicit `int` key which is scalar).
-fn extract_iterable_key_type_from_class(class: &ClassInfo) -> Option<String> {
+fn extract_iterable_key_type_from_class(
+    class: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
     // 1. Check implements_generics for known iterable interfaces.
     for (name, args) in &class.implements_generics {
         let short = short_name(name);
         if ITERABLE_IFACE_NAMES.contains(&short) && args.len() >= 2 {
+            let key = &args[0];
+            if !docblock::types::is_scalar(key) {
+                return Some(key.clone());
+            }
+        }
+    }
+
+    // 1b. Check implements_generics for interfaces that transitively
+    //     extend a known iterable interface.
+    for (name, args) in &class.implements_generics {
+        let short = short_name(name);
+        if !ITERABLE_IFACE_NAMES.contains(&short)
+            && args.len() >= 2
+            && let Some(iface) = class_loader(name)
+            && is_transitive_iterable(&iface, class_loader)
+        {
             let key = &args[0];
             if !docblock::types::is_scalar(key) {
                 return Some(key.clone());
@@ -409,6 +450,39 @@ fn extract_iterable_key_type_from_class(class: &ClassInfo) -> Option<String> {
     }
 
     None
+}
+
+/// Check whether an interface transitively extends a known iterable
+/// interface (e.g. `TypedCollection extends IteratorAggregate`).
+fn is_transitive_iterable(
+    iface: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> bool {
+    // Check direct interfaces.
+    for parent in &iface.interfaces {
+        let s = short_name(parent);
+        if ITERABLE_IFACE_NAMES.contains(&s) {
+            return true;
+        }
+    }
+    // Check extends_generics for the interface-extends-interface pattern.
+    for (name, _) in &iface.extends_generics {
+        let s = short_name(name);
+        if ITERABLE_IFACE_NAMES.contains(&s) {
+            return true;
+        }
+    }
+    // Check parent class (interfaces use `parent_class` for extends).
+    if let Some(ref parent_name) = iface.parent_class {
+        let s = short_name(parent_name);
+        if ITERABLE_IFACE_NAMES.contains(&s) {
+            return true;
+        }
+        if let Some(parent) = class_loader(parent_name) {
+            return is_transitive_iterable(&parent, class_loader);
+        }
+    }
+    false
 }
 
 // ─── Destructuring Resolution ───────────────────────────────────────
