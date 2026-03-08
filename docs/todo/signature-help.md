@@ -3,40 +3,18 @@
 Signature help is architecturally solid — dual-path detection (AST-based
 `CallSite` lookup + text-based fallback), precomputed comma offsets for
 active parameter tracking, content patching for unclosed parens, and
-chain/constructor/first-class-callable resolution all work well.
+chain/constructor/first-class-callable resolution all work well. The
+popup shows a compact parameter list with native PHP types, a shortened
+return type, per-parameter `@param` descriptions, and default values in
+parameter labels.
 
-The remaining work is almost entirely **presentation-layer wiring**: the
-data needed for rich signature help already exists on `ParameterInfo`,
-`MethodInfo`, and `FunctionInfo` (added during the hover overhaul), but
-`build_signature` and `ResolvedCallableTarget` don't propagate it to the
-LSP response yet.
+The remaining work requires new extraction or deeper protocol support.
 
 Items are ordered by impact (descending), then effort (ascending).
 
 ---
 
-<!-- ============================================================ -->
-<!--  TIER 1 — WIRING (data exists, just needs plumbing)          -->
-<!-- ============================================================ -->
-
-## Tier 1 — Wire Existing Data
-
-✅ **All Tier 1 items are complete.** The signature help popup is now two
-lines: a compact parameter list using native PHP types with a shortened
-return type, plus a per-parameter `@param` description (prefixed with
-the effective docblock type when it differs from the native hint).
-Default values appear in parameter labels. Retrigger on `)` dismisses
-the popup.
-
----
-
-<!-- ============================================================ -->
-<!--  TIER 2 — NEW EXTRACTION                                     -->
-<!-- ============================================================ -->
-
-## Tier 2 — New Extraction Work
-
-### 5. Closure / arrow function parameter signature help
+## 5. Closure / arrow function parameter signature help
 **Impact: Medium · Effort: Medium**
 
 Signature help should work when invoking a variable that holds a closure
@@ -88,13 +66,7 @@ don't end with `(...)`.
 
 ---
 
-<!-- ============================================================ -->
-<!--  TIER 3 — POLISH                                             -->
-<!-- ============================================================ -->
-
-## Tier 3 — Polish
-
-### 7. Multiple overloaded signatures
+## 7. Multiple overloaded signatures
 **Impact: Low · Effort: Medium-High**
 
 Some PHP functions have multiple signatures depending on argument count
@@ -132,7 +104,7 @@ This is a deeper change:
 
 ---
 
-### 8. Named argument awareness in active parameter
+## 8. Named argument awareness in active parameter
 **Impact: Low · Effort: Medium**
 
 When the user types a named argument (`callback: ` in `array_map(callback: `),
@@ -158,16 +130,6 @@ This requires access to the resolved parameters (to map name → index),
 which isn't available in the detection layer.  The override could be
 applied later in `resolve_signature`, after `resolve_callable` returns
 the parameter list.
-
----
-
-## Summary
-
-| # | Item | Impact | Effort | Data Ready | Target |
-|---|---|---|---|---|---|
-| 5 | Closure/arrow function sig help | Medium | Medium | ❌ | Sprint 2 |
-| 7 | Multiple overloaded signatures | Low | Medium-High | ❌ | Backlog |
-| 8 | Named argument active parameter | Low | Medium | ❌ | Backlog |
 
 ---
 

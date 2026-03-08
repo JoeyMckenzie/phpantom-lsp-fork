@@ -133,24 +133,19 @@ parsing and should feed into the same `return_type` field on
 ---
 
 ## 4. `#[Deprecated]` structured deprecation metadata
-**Status: ✅ Implemented**
+**Impact: Low · Effort: Low**
 
-PHPantom reads the `#[Deprecated]` attribute (FQN:
-`JetBrains\PhpStorm\Deprecated`) on classes, interfaces, traits, enums,
-methods, properties, constants, and standalone functions. The `reason`
-and `since` fields appear in hover, completion strikethrough, and
-deprecation diagnostics. When both a docblock `@deprecated` tag and the
-attribute are present, the docblock message takes priority.
+The `#[Deprecated]` attribute is parsed and wired into hover, completion
+strikethrough, and deprecation diagnostics. Two pieces remain:
 
-The `replacement` field is parsed and stored but not yet wired to a
-code action. Once the general code-action infrastructure lands, a
-"replace deprecated call" quick-fix can use the template (e.g.
-`"exif_read_data(%parametersList%)"`) to offer automatic replacement.
-
-**Remaining work:**
-- Wire `replacement` to a code action (blocked on code-action infra).
-- Use `since` to make deprecation warnings version-aware (suppress when
-  targeting a PHP version older than the `since` value).
+- **Replacement code action.** The `replacement` field is parsed and
+  stored but not yet wired to a code action. Once the general
+  code-action infrastructure lands, a "replace deprecated call"
+  quick-fix can use the template (e.g.
+  `"exif_read_data(%parametersList%)"`) to offer automatic replacement.
+- **Version-aware suppression.** Use the `since` field to suppress
+  deprecation warnings when targeting a PHP version older than the
+  `since` value.
 
 ---
 

@@ -429,11 +429,8 @@ structures.
 go-to-implementation, self-scan, diagnostics) by processing files in
 parallel with priority awareness.
 
-**Prerequisites (from [performance.md](performance.md)):**
-
-- **§3 `RwLock` for read-heavy maps.** ✅ Fixed.
-- **§5 `Arc<String>` for file content.** ✅ Fixed.
-- **§6 `Arc<SymbolMap>` to avoid snapshot cloning.** ✅ Fixed.
+All prerequisites (§3 `RwLock`, §5 `Arc<String>`, §6 `Arc<SymbolMap>`)
+are complete.
 
 ### Current state (partial)
 
@@ -536,7 +533,7 @@ scanning, and complete completion item detail.
 
 **Prerequisites (from [performance.md](performance.md)):**
 
-- **§1 FQN secondary index.** ✅ Done. `fqn_index` provides O(1)
+- **§1 FQN secondary index.** Done. `fqn_index` provides O(1)
   lookups by fully-qualified name, so the second pass populating
   `ast_map` with thousands of entries no longer causes linear scans.
 - **§2 `Arc<ClassInfo>`.** Full indexing stores a `ClassInfo` for every
@@ -544,12 +541,12 @@ scanning, and complete completion item detail.
   entire struct out of the map. With `Arc`, retrieval is a
   reference-count increment. This is the difference between full
   indexing using ~200 MB vs. ~500 MB for a large project.
-- **§3 `RwLock`.** The second pass writes to `ast_map` at Low priority
+- **§3 `RwLock`.** Done. The second pass writes to `ast_map` at Low priority
   while High-priority LSP requests read from it. `Mutex` would force
   every completion/hover request to wait for the current background
   parse to finish its map insertion. `RwLock` lets reads proceed
   concurrently with other reads; only the brief write window blocks.
-- **§4 `HashSet` dedup.** ✅ Done. All member deduplication during
+- **§4 `HashSet` dedup.** Done. All member deduplication during
   inheritance merging now uses `HashSet` lookups, bringing the
   per-resolution cost from O(N²) to O(N).
 

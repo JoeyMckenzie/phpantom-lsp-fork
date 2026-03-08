@@ -15,24 +15,6 @@ within the same impact tier.
 
 ---
 
-## 1. FQN secondary index for `find_class_in_ast_map`
-**Impact: High · Effort: Low (fixed)**
-
-**Status:** Fixed. `Backend` now carries a `fqn_index`
-(`Arc<RwLock<HashMap<String, ClassInfo>>>`) that maps fully-qualified
-class names directly to their parsed `ClassInfo`.
-`find_class_in_ast_map` performs an O(1) hash lookup against this
-index before falling back to the linear `ast_map` scan (which now
-only serves as a safety net for anonymous classes or race conditions
-during initial indexing).
-
-The index is maintained in both `update_ast_inner` (stale entries
-removed via the `old_fqns` snapshot, new entries inserted alongside
-`class_index`) and `parse_and_cache_content_versioned` (entries
-inserted after the `ast_map` write).
-
----
-
 ## 2. Reference-counted `ClassInfo` (`Arc<ClassInfo>`)
 **Impact: High · Effort: Medium**
 
@@ -86,83 +68,6 @@ accepting `ClassInfo`. It can be done incrementally:
    `Arc<ClassInfo>` where possible.
 
 Each step compiles and passes tests independently.
-
----
-
-## 3. `RwLock` for read-heavy maps
-**Impact: Medium · Effort: Low (fixed)**
-
-**Status:** Fixed. All read-heavy `Arc<Mutex<…>>` fields on `Backend`
-have been replaced with `Arc<parking_lot::RwLock<…>>`:
-
-- `ast_map`, `symbol_maps`, `use_map`, `namespace_map`
-- `class_index`, `classmap`
-- `global_functions`, `global_defines`
-- `open_files`
-- `workspace_root`, `psr4_mappings`
-
-Fields that are rarely accessed or always written use
-`parking_lot::Mutex` (no poisoning, no `Result` unwrapping):
-
-- `resolved_class_cache` — frequently written (cache stores)
-- `php_version`, `vendor_uri_prefix`, `vendor_dir_name`, `config` —
-  written once during init, read rarely
-- `diag_pending_uri` — tiny critical section
-
-All `.lock().ok()?` / `.lock().map(…)` patterns were simplified to
-direct `.read()` or `.write()` calls. `parking_lot` v0.12 added as a
-dependency.
-
----
-
-## 4. `HashSet` dedup in inheritance merging
-**Impact: Medium · Effort: Low (fixed)**
-
-**Status:** Fixed. All member deduplication during inheritance merging
-now uses `HashSet<String>` lookups instead of linear scans.
-
-A `MergeDedup` struct (with `methods`, `properties`, and `constants`
-`HashSet`s) is built from the class's own members at the start of
-`resolve_class_with_inheritance` and threaded through
-`merge_traits_into` (including recursive calls) so that every
-addition is checked in O(1).
-
-The same pattern is applied in `merge_virtual_members`,
-`merge_interface_members_into`, `PHPDocProvider::provide` (Phases 1,
-1b, 1c, and mixin collection), `collect_mixin_members` (via a
-`MixinDedup` struct passed through recursion), and
-`LaravelModelProvider::provide`.
-
-The `merged.methods.iter().any(...)` calls in
-`definition/implementation.rs` were intentionally left as linear scans
-because they run once per lookup, not per-member-per-level.
-
----
-
-## 5. `Arc<String>` for file content in `open_files`
-**Impact: Low-Medium · Effort: Low (fixed)**
-
-**Status:** Fixed. `open_files` now stores `HashMap<String, Arc<String>>`.
-`did_open` and `did_change` wrap the file text in `Arc::new()` once on
-insertion. `get_file_content` (which returns an owned `String`) still
-deep-clones for callers that need it, but the new `get_file_content_arc`
-returns a cheap `Arc::clone` for hot paths like cross-file reference
-scanning. The diagnostic worker's snapshot (`files.get(&uri).clone()`)
-is now an atomic increment instead of a full string copy.
-
----
-
-## 6. `Arc<SymbolMap>` to avoid snapshot cloning
-**Impact: Low-Medium · Effort: Low (fixed)**
-
-**Status:** Fixed. `symbol_maps` now stores
-`HashMap<String, Arc<SymbolMap>>`. `update_ast_inner` wraps the
-extracted symbol map in `Arc::new()` before insertion.
-`user_file_symbol_maps` returns `Vec<(String, Arc<SymbolMap>)>` where
-each entry is a cheap `Arc::clone`. All read sites (diagnostics,
-code actions, completion, hover, definition, highlight) that previously
-deep-cloned a `SymbolMap` now clone the `Arc` instead, and access
-fields through `Deref`.
 
 ---
 

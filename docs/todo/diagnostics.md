@@ -11,75 +11,19 @@ within the same impact tier.
 ---
 
 ## 2. Resolution-failure diagnostics
-**Impact: Medium · Effort: Medium** *(mostly done — unresolved class/interface, unresolved member access, and unresolvable subject type implemented; unresolved function and unresolved PHPDoc type remain)*
+**Impact: Medium · Effort: Medium**
 
-Report diagnostics only for symbols and types that PHPantom's own engine
-failed to resolve. This is **not** a general PHP linter — we don't check
-argument counts, type compatibility, or missing semicolons. The goal is
-twofold:
-
-1. **Surface bugs in our engine.** On well-typed projects, every
-   diagnostic is a false positive that points at a resolution code path
-   we need to fix. This gives us a live regression signal.
-2. **Guide under-typed projects.** On projects that aren't fully typed,
-   the diagnostics show exactly where adding annotations would unlock
-   completion and go-to-definition.
-
-All diagnostics should be published on `textDocument/didOpen` and
-`textDocument/didChange` (debounced). Severity is **Warning** for
-unresolved types (the code may still run fine) and **Hint** or
-**Information** for softer signals.
+Unresolved class/interface, unresolved member access, and unresolvable
+subject type diagnostics are already implemented. Two diagnostic types
+remain:
 
 ### Diagnostics to emit
 
 | Diagnostic | Trigger | Severity | Example |
 |---|---|---|---|
-| ✅ Unresolved class/interface | A type hint, `extends`, `implements`, `new`, or `::` reference that `find_or_load_class` cannot resolve after all phases (ast_map → classmap → PSR-4 → stubs) | Warning | `Class 'App\Foo' not found` | *Done — `diagnostics::unknown_classes` module* |
 | Unresolved function | A function call that `find_or_load_function` cannot resolve (global functions, namespaced functions, stubs) | Warning | `Function 'do_thing' not found` |
-| ✅ Unresolved member access | `->method()` or `->property` on a type we *did* resolve, but the member doesn't exist after full resolution (inheritance + virtual providers) | Warning | `Method 'frobnicate' not found on class 'App\Bar'` | *Done — `diagnostics::unknown_members` module. PHPactor benchmark fixtures `lots_of_missing_methods` and `method_chain` enabled in `benches/completion.rs`.* |
-| ✅ Unresolvable subject type (opt-in) | `->method()`, `?->method()`, or `::method()` where PHPantom cannot resolve the subject type at all (e.g. `mixed`, untyped variable, uninferrable return type) | Hint | `Cannot resolve type of '$x'. Add a type annotation or PHPDoc tag to enable full IDE support.` | *Done — `diagnostics::unresolved_member_access` module. Off by default; enable via `[diagnostics] unresolved-member-access = true` in `.phpantom.toml`.* |
 | Unresolved type in PHPDoc | A `@return`, `@param`, `@var`, `@throws`, `@mixin`, or `@extends` tag references a class that cannot be resolved | Information | `Type 'SomeAlias' in @return could not be resolved` |
 
-
-### What we explicitly do NOT report
-
-- Syntax errors (Mago already handles that; we use error-tolerant parsing)
-- Argument count / type mismatches (that's PHPStan's job)
-- Unused variables, imports, or dead code
-- Missing return types or parameter types
-- Code style violations
-
-### Implementation plan
-
-1. **Add `publishDiagnostics` capability** in `initialize` response and
-   store a handle to the client notification sender.
-2. **Collect diagnostics during `update_ast`** — the symbol map walk
-   already visits every class reference, member access, and function
-   call. At each site, attempt resolution; on failure, record a
-   `DiagnosticEntry { range, message, severity }`.
-3. **Debounce and publish** — after `update_ast` completes (on open or
-   change), send `textDocument/publishDiagnostics` with the collected
-   entries. Debounce changes to ~200 ms so fast typing doesn't spam.
-4. **Clear on close** — send an empty diagnostics array when a file is
-   closed.
-5. **User opt-out** — respect a config flag (e.g.
-   `phpantom.diagnostics.enabled: bool`, default `true`) so users who
-   rely solely on PHPStan / Psalm can turn ours off.
-
-### Design notes
-
-- **False positive budget:** treat every false positive as a bug. If a
-  diagnostic fires on valid, well-typed code, the fix goes in the
-  resolution engine, not in a suppression list. This keeps us honest.
-- **No cross-file diagnostics** — only diagnose the file being
-  edited/opened. We don't scan the whole project.
-- **Stubs are authoritative** — if a symbol exists in phpstorm-stubs,
-  it's resolved. We don't warn about `array_map` not being found
-  because a stub was missing.
-- **Performance** — resolution is already happening for completion and
-  definition; diagnostics piggyback on the same code paths. The
-  incremental cost should be small since we're just collecting failures
-  that currently get silently swallowed.
 
 ---
 

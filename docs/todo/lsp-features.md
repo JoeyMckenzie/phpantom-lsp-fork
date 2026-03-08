@@ -329,20 +329,6 @@ visible — well within our per-file performance budget.
 
 ---
 
-## 10. Reverse jump: implementation → interface method declaration
-**Impact: Medium · Effort: Low (fixed)**
-
-**Status:** Fixed. When go-to-implementation is invoked on a
-`MemberDeclaration` symbol in a concrete class, the handler walks the
-class's interfaces (including those inherited from parent classes) and
-parent abstract classes to find the prototype method declaration and
-returns its location. Conversely, invoking go-to-implementation on a
-method declaration inside an interface or abstract class finds the
-concrete implementations. Tested with same-file and transitive
-inheritance scenarios.
-
----
-
 ## 11. No go-to-definition for built-in (stub) functions and constants
 **Impact: Medium · Effort: Medium**
 

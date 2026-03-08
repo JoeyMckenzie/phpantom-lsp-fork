@@ -20,7 +20,6 @@ with each step.
 | [Diagnostics](todo/diagnostics.md) | `@deprecated` warnings, resolution-failure diagnostics, unused `use` dimming, suppression intelligence |
 | [Code Actions](todo/actions.md) | Import class, remove unused imports, implement missing methods, null coalescing simplification, extract function, inline variable, extract variable, inline function/method, switch→match |
 | [LSP Features](todo/lsp-features.md) | Find references, document highlighting, document/workspace symbols, rename, code lens, inlay hints, PHPDoc generation, partial result streaming |
-| [Hover](todo/hover.md) | Deprecation messages, constant values, member origin indicators, enum case listing, trait method summaries |
 | [Signature Help](todo/signature-help.md) | Parameter descriptions, signature-level docs, default values, attribute/closure support |
 | [Laravel](todo/laravel.md) | Model property gaps, relationship methods, type narrowing, custom builders |
 | [Blade](todo/blade.md) | Preprocessor, component support, cross-file view intelligence |
@@ -30,30 +29,6 @@ with each step.
 | [Indexing](todo/indexing.md) | Self-generated classmap, staleness detection, parallel file processing, full background indexing, disk cache |
 | [External Stubs](todo/external-stubs.md) | Composer stub discovery, IDE-provided stub paths, GTD for built-in symbols, stub override priority, SPL overlay stubs |
 | [Performance](todo/performance.md) | FQN index, `Arc<ClassInfo>`, `RwLock`, inheritance dedup, file content cloning, type substitution optimisation |
-
----
-
-## Sprint 2.5 — Parallel file processing (0.5.0)
-
-This sprint delivers parallel file processing for workspace-wide
-operations (find references, go-to-implementation, self-scan,
-diagnostics). The prerequisite items replace shared data structures
-with reference-counted wrappers so that parallel threads share data
-cheaply instead of deep-cloning.
-
-| # | Item | Effort | Domain | Doc Link | Status |
-|---|---|---|---|---|---|
-| 85 | `Arc<String>` for file content in `open_files` | Low | Performance | [performance.md §5](todo/performance.md#5-arcstring-for-file-content-in-open_files) | ✅ Done |
-| 86 | `Arc<SymbolMap>` to avoid snapshot cloning | Low | Performance | [performance.md §6](todo/performance.md#6-arcsymbolmap-to-avoid-snapshot-cloning) | ✅ Done |
-| 95 | Parallel file processing | Medium | Indexing | [indexing.md §3](todo/indexing.md#phase-3-parallel-file-processing) | ✅ Done (initial) |
-| 14 | Signature help fires on function definition sites | Low | Bug Fix | [bugs.md §14](todo/bugs.md#14-signature-help-fires-on-function-definition-sites) | ✅ Done |
-
-**After Sprint 2.5:** `ensure_workspace_indexed` parses files across
-multiple cores using `std::thread::scope`. File content and symbol
-maps are shared by reference instead of deep-cloned. Transient entry
-eviction after GTI and find references has been removed; parsed files
-stay cached for faster repeat queries. Priority-aware scheduling
-(preempting batch work for interactive requests) is deferred.
 
 ---
 
