@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docblock navigation.** Go-to-definition and hover work on class names inside callable types, array/object shape value types, and object shape properties.
 - **GTD from parameter and property variables.** Clicking a parameter or property at its definition site jumps to the type hint class.
 - **Inline `@var` on promoted constructor properties.** Overrides the native type hint, matching existing `@param` support.
+- **`--version` and `--help` CLI flags.** Contributed by [@calebdw](https://github.com/calebdw) in [#7](https://github.com/AJenbo/phpantom_lsp/pull/7).
 
 ### Changed
 
@@ -55,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Concurrent read access.** All read-heavy maps use `parking_lot::RwLock` for parallel request handling.
 - **Parallel workspace indexing.** File parsing, PSR-4 scanning, and vendor scanning run across all CPU cores. `.gitignore` rules are respected. `memchr` SIMD acceleration for the byte-level scanner.
 - **Merged classmap + self-scan pipeline.** Composer classmaps and self-scanning work together instead of being mutually exclusive. Stale classmaps are supplemented automatically.
-- **Automatic stub fetching.** The build script downloads phpstorm-stubs automatically when missing. Composer is no longer needed to build PHPantom.
+- **Automatic stub fetching.** The build script downloads phpstorm-stubs automatically when missing. Composer is no longer needed to build PHPantom. Contributed by [@calebdw](https://github.com/calebdw) in [#16](https://github.com/AJenbo/phpantom_lsp/pull/16).
+- **Feature comparison table corrected.** Phactor capabilities updated in the README. Contributed by [@dantleech](https://github.com/dantleech) in [#10](https://github.com/AJenbo/phpantom_lsp/pull/10).
 
 ### Fixed
 
