@@ -44,7 +44,7 @@ pub(crate) fn catch_panic<T>(
         Ok(value) => Some(value),
         Err(_) => {
             if let Some(pos) = position {
-                log::error!(
+                tracing::error!(
                     "PHPantom: panic during {} at {}:{}:{}",
                     label,
                     uri,
@@ -52,7 +52,7 @@ pub(crate) fn catch_panic<T>(
                     pos.character
                 );
             } else {
-                log::error!("PHPantom: panic during {} at {}", label, uri);
+                tracing::error!("PHPantom: panic during {} at {}", label, uri);
             }
             None
         }

@@ -481,7 +481,7 @@ pub(crate) fn with_parsed_program<T: Default>(
     match result {
         Ok(value) => value,
         Err(_) => {
-            log::error!("PHPantom: parser panicked in {}", method_name);
+            tracing::error!("PHPantom: parser panicked in {}", method_name);
             T::default()
         }
     }

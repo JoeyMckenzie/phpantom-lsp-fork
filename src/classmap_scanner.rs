@@ -448,7 +448,7 @@ fn scan_files_parallel_classes(files: &[PathBuf]) -> HashMap<String, PathBuf> {
             .into_iter()
             .map(|h| {
                 h.join().unwrap_or_else(|_| {
-                    log::error!("PHPantom: thread panic in scan_files_parallel_classes");
+                    tracing::error!("PHPantom: thread panic in scan_files_parallel_classes");
                     Vec::new()
                 })
             })
@@ -516,7 +516,7 @@ fn scan_files_parallel_psr4(files: &[(PathBuf, String)]) -> HashMap<String, Path
             .into_iter()
             .map(|h| {
                 h.join().unwrap_or_else(|_| {
-                    log::error!("PHPantom: thread panic in scan_files_parallel_psr4");
+                    tracing::error!("PHPantom: thread panic in scan_files_parallel_psr4");
                     Vec::new()
                 })
             })
@@ -594,7 +594,7 @@ fn scan_files_parallel_full(files: &[PathBuf]) -> WorkspaceScanResult {
             .into_iter()
             .map(|h| {
                 h.join().unwrap_or_else(|_| {
-                    log::error!("PHPantom: thread panic in scan_files_parallel_full");
+                    tracing::error!("PHPantom: thread panic in scan_files_parallel_full");
                     Vec::new()
                 })
             })

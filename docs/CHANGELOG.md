@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Generic type substitution.** `apply_substitution` now returns early when no template parameters appear in the type string, avoiding allocation and recursion in the common case.
 - **Cross-file resolution.** Fully-qualified class names are now stored in a single canonical form throughout the system, eliminating a class of bugs where name comparisons failed because one side had a leading backslash and the other did not. This improves reliability of completion, hover, go-to-definition, and cache invalidation across files.
 - **tower-lsp 0.20.** Upgraded the LSP framework from 0.18 to 0.20, bringing native trait support for inlay hints, type hierarchy, and pull diagnostics. Inlay hints are now served through the standard protocol method instead of a custom handler.
+- **Logging.** Replaced `log`/`env_logger` with `tracing`/`tracing-subscriber`, aligning with the logging framework tower-lsp already uses internally.
+- **Dependencies.** Bumped minimum versions for `clap` (4.5) and `tokio` (1.39). Ran `cargo update` to pull latest compatible patch releases across the lockfile.
+
+### Fixed
+
+- **Diagnostics.** By-reference `@param` annotations (e.g. `@param array<int> &$data`) no longer produce a false "unknown class '$data'" diagnostic.
 
 ## [0.5.0] - 2026-03-12
 
