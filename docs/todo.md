@@ -29,6 +29,7 @@ with each step.
 | [Indexing](todo/indexing.md) | Self-generated classmap, staleness detection, parallel file processing, full background indexing, disk cache |
 | [External Stubs](todo/external-stubs.md) | Composer stub discovery, IDE-provided stub paths, GTD for built-in symbols, stub override priority, SPL overlay stubs |
 | [Performance](todo/performance.md) | FQN index, `Arc<ClassInfo>`, `RwLock`, inheritance dedup, file content cloning, type substitution optimisation |
+| [Inline Completion](todo/inline-completion.md) | Template engine (type-aware foreach/return/try-catch/match), n-gram prediction from PHP corpus, optional fine-tuned GGUF sidecar model |
 
 ---
 
