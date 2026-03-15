@@ -791,10 +791,9 @@ impl LanguageServer for Backend {
                     WorkspaceUnchangedDocumentDiagnosticReport {
                         uri,
                         version: None,
-                        unchanged_document_diagnostic_report:
-                            UnchangedDocumentDiagnosticReport {
-                                result_id: current_id.to_string(),
-                            },
+                        unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                            result_id: current_id.to_string(),
+                        },
                     },
                 ));
                 continue;

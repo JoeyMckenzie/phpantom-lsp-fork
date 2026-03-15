@@ -2330,6 +2330,437 @@ function test(): void {
         );
     }
 
+    /// D1 scenario: `$user->getName()->trim()` — method call on a scalar
+    /// return type in a chain where the variable is typed via assignment.
+    #[test]
+    fn flags_method_call_on_scalar_method_return_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class User {
+    public function getName(): string { return 'Alice'; }
+    public function getAge(): int { return 30; }
+}
+function test(): void {
+    $user = new User();
+    $user->getName()->trim();
+    $user->getAge()->value;
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.len() >= 2,
+            "Expected at least 2 diagnostics for scalar member access chains, got {}: {:?}",
+            diags.len(),
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let trim_diag = diags.iter().find(|d| d.message.contains("trim"));
+        assert!(
+            trim_diag.is_some(),
+            "Expected a diagnostic mentioning 'trim', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let trim_diag = trim_diag.unwrap();
+        assert!(
+            trim_diag.message.contains("string"),
+            "Diagnostic should mention 'string', got: {}",
+            trim_diag.message,
+        );
+        assert_eq!(
+            trim_diag.severity,
+            Some(DiagnosticSeverity::ERROR),
+            "Scalar member access should be ERROR severity",
+        );
+        assert_eq!(
+            trim_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+
+        let value_diag = diags.iter().find(|d| d.message.contains("value"));
+        assert!(
+            value_diag.is_some(),
+            "Expected a diagnostic mentioning 'value', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let value_diag = value_diag.unwrap();
+        assert!(
+            value_diag.message.contains("int"),
+            "Diagnostic should mention 'int', got: {}",
+            value_diag.message,
+        );
+        assert_eq!(
+            value_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// D1 scenario with typed parameter: method call chain on parameter
+    /// whose method returns a scalar.
+    #[test]
+    fn flags_method_call_on_scalar_return_typed_param() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class User {
+    public function getName(): string { return 'Alice'; }
+}
+function test(User $user): void {
+    $user->getName()->trim();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert_eq!(diags.len(), 1, "Expected 1 diagnostic, got: {:?}", diags);
+        assert!(
+            diags[0].message.contains("trim"),
+            "Diagnostic should mention 'trim', got: {}",
+            diags[0].message,
+        );
+        assert!(
+            diags[0].message.contains("string"),
+            "Diagnostic should mention 'string', got: {}",
+            diags[0].message,
+        );
+        assert_eq!(
+            diags[0].code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// Static method chain returning scalar: `User::create()->getName()->trim()`.
+    #[test]
+    fn flags_scalar_access_on_static_method_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class User {
+    public static function create(): self { return new self(); }
+    public function getName(): string { return 'Alice'; }
+}
+function test(): void {
+    User::create()->getName()->trim();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        let trim_diag = diags.iter().find(|d| d.message.contains("trim"));
+        assert!(
+            trim_diag.is_some(),
+            "Expected a diagnostic mentioning 'trim', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let trim_diag = trim_diag.unwrap();
+        assert!(
+            trim_diag.message.contains("string"),
+            "Diagnostic should mention 'string', got: {}",
+            trim_diag.message,
+        );
+        assert_eq!(
+            trim_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// Standalone function returning scalar, then member access:
+    /// `getCount()->value`.
+    #[test]
+    fn flags_scalar_access_on_function_return_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+function getCount(): int { return 42; }
+function test(): void {
+    getCount()->value;
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        let value_diag = diags.iter().find(|d| d.message.contains("value"));
+        assert!(
+            value_diag.is_some(),
+            "Expected a diagnostic mentioning 'value', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let value_diag = value_diag.unwrap();
+        assert!(
+            value_diag.message.contains("int"),
+            "Diagnostic should mention 'int', got: {}",
+            value_diag.message,
+        );
+        assert_eq!(
+            value_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// Docblock-only return type (no native hint): method returning
+    /// scalar via `@return` should still trigger the diagnostic.
+    #[test]
+    fn flags_scalar_access_on_docblock_return_type() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class Config {
+    /** @return bool */
+    public function isEnabled() { return true; }
+}
+function test(): void {
+    $cfg = new Config();
+    $cfg->isEnabled()->something;
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        let diag = diags.iter().find(|d| d.message.contains("something"));
+        assert!(
+            diag.is_some(),
+            "Expected a diagnostic mentioning 'something', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let diag = diag.unwrap();
+        assert!(
+            diag.message.contains("bool"),
+            "Diagnostic should mention 'bool', got: {}",
+            diag.message,
+        );
+        assert_eq!(
+            diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// Chained static call returning scalar: `Foo::bar()::baz()`.
+    #[test]
+    fn flags_scalar_access_on_static_return_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class Util {
+    public static function count(): int { return 0; }
+}
+function test(): void {
+    Util::count()->value;
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        let value_diag = diags.iter().find(|d| d.message.contains("value"));
+        assert!(
+            value_diag.is_some(),
+            "Expected a diagnostic mentioning 'value', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let value_diag = value_diag.unwrap();
+        assert!(
+            value_diag.message.contains("int"),
+            "Diagnostic should mention 'int', got: {}",
+            value_diag.message,
+        );
+        assert_eq!(
+            value_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// No false positive: method returning a class should not trigger
+    /// scalar diagnostic even through a chain.
+    #[test]
+    fn no_scalar_diagnostic_for_class_returning_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class Builder {
+    public function build(): self { return $this; }
+    public function reset(): self { return $this; }
+}
+function test(): void {
+    $b = new Builder();
+    $b->build()->reset();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "No diagnostics expected for class-returning chain, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+    }
+
+    /// Function-returning-class chain: `getUser()->getName()->trim()` —
+    /// the intermediate callee is a standalone function returning a class,
+    /// and the next method returns a scalar.
+    #[test]
+    fn flags_scalar_access_on_function_returning_class_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class User {
+    public function getName(): string { return 'Alice'; }
+}
+function getUser(): User { return new User(); }
+function test(): void {
+    getUser()->getName()->trim();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        let trim_diag = diags.iter().find(|d| d.message.contains("trim"));
+        assert!(
+            trim_diag.is_some(),
+            "Expected a diagnostic mentioning 'trim', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let trim_diag = trim_diag.unwrap();
+        assert!(
+            trim_diag.message.contains("string"),
+            "Diagnostic should mention 'string', got: {}",
+            trim_diag.message,
+        );
+        assert_eq!(
+            trim_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// Array access base chain: `$arr[0]->getName()->trim()` — the
+    /// base is an array element typed as a class, the method returns
+    /// a scalar, and the final member access should flag the scalar.
+    #[test]
+    fn flags_scalar_access_on_array_element_method_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class User {
+    public function getName(): string { return 'Alice'; }
+}
+function test(): void {
+    /** @var array<int, User> $arr */
+    $arr = [];
+    $arr[0]->getName()->trim();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        let trim_diag = diags.iter().find(|d| d.message.contains("trim"));
+        assert!(
+            trim_diag.is_some(),
+            "Expected a diagnostic mentioning 'trim', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let trim_diag = trim_diag.unwrap();
+        assert!(
+            trim_diag.message.contains("string"),
+            "Diagnostic should mention 'string', got: {}",
+            trim_diag.message,
+        );
+        assert_eq!(
+            trim_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// Deeper chain: `$user->getManager()->getName()->trim()` — the
+    /// intermediate callee (`getManager()`) returns a class, but the
+    /// next call (`getName()`) returns a scalar.  The outermost member
+    /// access (`->trim()`) should flag the scalar.
+    #[test]
+    fn flags_scalar_access_on_deeper_method_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class Manager {
+    public function getName(): string { return 'Bob'; }
+}
+class User {
+    public function getManager(): Manager { return new Manager(); }
+}
+function test(): void {
+    $user = new User();
+    $user->getManager()->getName()->trim();
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        let trim_diag = diags.iter().find(|d| d.message.contains("trim"));
+        assert!(
+            trim_diag.is_some(),
+            "Expected a diagnostic mentioning 'trim', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let trim_diag = trim_diag.unwrap();
+        assert!(
+            trim_diag.message.contains("string"),
+            "Diagnostic should mention 'string', got: {}",
+            trim_diag.message,
+        );
+        assert_eq!(
+            trim_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
+    /// Property access on a deeper chain where the last method returns
+    /// a scalar: `$user->getManager()->getAge()->value`.
+    #[test]
+    fn flags_scalar_property_access_on_deeper_method_chain() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class Manager {
+    public function getAge(): int { return 42; }
+}
+class User {
+    public function getManager(): Manager { return new Manager(); }
+}
+function test(): void {
+    $user = new User();
+    $user->getManager()->getAge()->value;
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        let value_diag = diags.iter().find(|d| d.message.contains("value"));
+        assert!(
+            value_diag.is_some(),
+            "Expected a diagnostic mentioning 'value', got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>(),
+        );
+        let value_diag = value_diag.unwrap();
+        assert!(
+            value_diag.message.contains("int"),
+            "Diagnostic should mention 'int', got: {}",
+            value_diag.message,
+        );
+        assert_eq!(
+            value_diag.code,
+            Some(NumberOrString::String(
+                SCALAR_MEMBER_ACCESS_CODE.to_string()
+            )),
+            "Scalar member access should use scalar_member_access code",
+        );
+    }
+
     /// Member access on a virtual (@property) scalar type should also
     /// produce a diagnostic.
     #[test]

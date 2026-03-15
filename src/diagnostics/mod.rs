@@ -130,12 +130,7 @@ impl Backend {
 
     /// Collect Phase 1 (fast) diagnostics: syntax errors, deprecated
     /// usage, unused imports.  These are cheap — no type resolution.
-    fn collect_fast_diagnostics(
-        &self,
-        uri_str: &str,
-        content: &str,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn collect_fast_diagnostics(&self, uri_str: &str, content: &str, out: &mut Vec<Diagnostic>) {
         self.collect_syntax_error_diagnostics(uri_str, content, out);
         self.collect_deprecated_diagnostics(uri_str, content, out);
         self.collect_unused_import_diagnostics(uri_str, content, out);
@@ -144,12 +139,7 @@ impl Backend {
     /// Collect Phase 2 (slow) diagnostics: unknown class/member/function,
     /// argument count, implementation errors.  These require type
     /// resolution and are expensive.
-    fn collect_slow_diagnostics(
-        &self,
-        uri_str: &str,
-        content: &str,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn collect_slow_diagnostics(&self, uri_str: &str, content: &str, out: &mut Vec<Diagnostic>) {
         self.collect_unknown_class_diagnostics(uri_str, content, out);
         self.collect_unknown_member_diagnostics(uri_str, content, out);
         self.collect_unknown_function_diagnostics(uri_str, content, out);
@@ -270,7 +260,10 @@ impl Backend {
         if !phpstan_before.is_empty() {
             let pruned: Vec<Diagnostic> = phpstan_before
                 .into_iter()
-                .filter(|d| full.iter().any(|f| f.range == d.range && f.message == d.message))
+                .filter(|d| {
+                    full.iter()
+                        .any(|f| f.range == d.range && f.message == d.message)
+                })
                 .collect();
             let mut cache = self.phpstan_last_diags.lock();
             if let Some(cached) = cache.get(uri_str)

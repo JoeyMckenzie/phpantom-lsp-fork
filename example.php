@@ -2070,7 +2070,7 @@ class HoverOriginsDemo extends Model implements Renderable
     public function demo(): void
     {
         // Hover on `format` → "◆ implements Renderable"
-        $this->format();
+        $this->format('earth');
 
         // Hover on `toArray` → "↑ overrides Model"
         $this->toArray();
@@ -2152,6 +2152,32 @@ class UnknownMemberDemo
 
         // Static access — unknown constant gets a warning:
         User::MISSING_CONST;
+    }
+}
+
+
+// ── Diagnostic: Scalar Member Access ────────────────────────────────────────
+// Accessing a property or calling a method on a scalar type (int, string,
+// bool, float, null, void, never) is always a runtime error.  PHPantom flags
+// these with an Error-severity diagnostic, including through method-return
+// chains.
+
+class ScalarMemberAccessDemo
+{
+    public function demo(User $user): void
+    {
+        // getName() returns string — accessing a method on it is an error:
+        $user->getName()->trim();
+
+        // getEmail() returns string — property access is also an error:
+        $user->getEmail()->length;
+
+        // Chains through intermediate classes work too:
+        $user->getProfile()->getDisplayName()->toUpper();
+
+        // Works with Response too — isSuccess() returns bool:
+        $resp = new Response(200, 'OK');
+        $resp->isSuccess()->flag;
     }
 }
 

@@ -33,12 +33,11 @@ and Change Visibility (A9) is a low-effort quick win. Neither depends
 on scope analysis or the refactoring toolkit, so they belong here
 rather than waiting for later sprints.
 
-| #   | Item                                             | Effort | Domain       | Doc Link                                                                                    |
-| --- | ------------------------------------------------ | ------ | ------------ | ------------------------------------------------------------------------------------------- |
-| D1  | Scalar member access diagnostic — remaining gaps | Low    | Diagnostics  | [diagnostics.md D1](todo/diagnostics.md#d1-scalar-member-access-diagnostic--remaining-gaps) |
-| F1  | PHPDoc block generation on `/**`                 | Medium | LSP Features | [lsp-features.md F1](todo/lsp-features.md#f1-phpdoc-block-generation-on-)                   |
-| A8  | Update docblock to match signature               | Medium | Code Actions | [actions.md A8](todo/actions.md#a8-update-docblock-to-match-signature)                      |
-| A9  | Change visibility                                | Low    | Code Actions | [actions.md A9](todo/actions.md#a9-change-visibility)                                       |
+| #   | Item                               | Effort | Domain       | Doc Link                                                                  |
+| --- | ---------------------------------- | ------ | ------------ | ------------------------------------------------------------------------- |
+| F1  | PHPDoc block generation on `/**`   | Medium | LSP Features | [lsp-features.md F1](todo/lsp-features.md#f1-phpdoc-block-generation-on-) |
+| A8  | Update docblock to match signature | Medium | Code Actions | [actions.md A8](todo/actions.md#a8-update-docblock-to-match-signature)    |
+| A9  | Change visibility                  | Low    | Code Actions | [actions.md A9](todo/actions.md#a9-change-visibility)                     |
 
 **After Sprint 3:** PHPantom feels like a complete LSP to everyday
 users. Outline, breadcrumbs, workspace search, semantic highlighting,

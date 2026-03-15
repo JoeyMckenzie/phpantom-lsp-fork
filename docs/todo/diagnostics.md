@@ -23,31 +23,6 @@ PHPantom assigns diagnostic severity based on runtime consequences:
 
 ---
 
-## D1. Scalar member access diagnostic — remaining gaps
-
-**Impact: High · Effort: Low**
-
-Member access on a scalar type is always a runtime error. The
-`scalar_member_access` diagnostic (Error severity) is implemented for
-bare variables, property chains, and call expression returns. Duplicate
-suppression (dropping the `unresolved_member_access` hint when a more
-specific diagnostic overlaps) is also done.
-
-### Remaining gaps
-
-| Scenario                   | Current | Expected                                                |
-| -------------------------- | ------- | ------------------------------------------------------- |
-| `$user->getName()->trim()` | Silent  | **Error**: Cannot access method 'trim' on type 'string' |
-| `$user->getAge()->value`   | Silent  | **Error**: Cannot access property 'value' on type 'int' |
-
-These are method-return-chain subjects where the return type is scalar.
-The `resolve_scalar_subject_type` function handles `CallExpr` callee
-types for standalone functions and static methods, but method call
-chains where the intermediate callee is itself a call expression are
-not yet covered.
-
----
-
 ## D2. Chain error propagation (flag only the first broken link)
 
 **Impact: Medium · Effort: Medium**

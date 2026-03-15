@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Diagnostics.** Scalar member access errors now detect method-return chains where an intermediate call returns a scalar type (e.g. `$user->getName()->trim()` correctly reports "Cannot access method 'trim' on type 'string'").
 - **Diagnostics.** By-reference `@param` annotations (e.g. `@param array<int> &$data`) no longer produce a false "unknown class '$data'" diagnostic.
 
 ## [0.5.0] - 2026-03-12
