@@ -3627,3 +3627,199 @@ async fn test_goto_definition_trait_alias_cross_file() {
         other => panic!("Expected Scalar location, got: {:?}", other),
     }
 }
+
+/// When a class uses a trait with `foo as __foo` AND also declares its own
+/// `foo()`, clicking `$this->__foo()` should jump to the trait's `foo()`
+/// method, not the class's own `foo()`.
+#[tokio::test]
+async fn test_goto_definition_trait_alias_when_class_overrides_original_method() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///trait_alias_override.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "trait Foo {\n",
+        "    public function foo(): string { return 'foo'; }\n",
+        "}\n",
+        "class User {\n",
+        "    use Foo {\n",
+        "        foo as __foo;\n",
+        "    }\n",
+        "    public function foo(): string {\n",
+        "        return $this->__foo() . 'bar';\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on `__foo` in `$this->__foo()` on line 9
+    let line9 = text.lines().nth(9).unwrap();
+    let alias_col = line9.find("__foo").unwrap();
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 9,
+                character: alias_col as u32 + 1,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve $this->__foo() to the trait's foo() method"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            // Foo::foo() is declared on line 2 (the trait method)
+            assert_eq!(
+                location.range.start.line, 2,
+                "Should point to foo() in trait Foo (line 2), not User::foo() (line 8)"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+/// Clicking on the alias name in `foo as __foo` when the class also
+/// declares its own `foo()` should jump to the trait's `foo()` method.
+#[tokio::test]
+async fn test_goto_definition_trait_alias_decl_when_class_overrides_original_method() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///trait_alias_decl_override.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "trait Foo {\n",
+        "    public function foo(): string { return 'foo'; }\n",
+        "}\n",
+        "class User {\n",
+        "    use Foo {\n",
+        "        foo as __foo;\n",
+        "    }\n",
+        "    public function foo(): string {\n",
+        "        return $this->__foo() . 'bar';\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on `__foo` in `foo as __foo;` on line 6
+    let line6 = text.lines().nth(6).unwrap();
+    let alias_col = line6.find("__foo").unwrap();
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 6,
+                character: alias_col as u32 + 1,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve alias __foo in trait use block to the trait's foo()"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            // Foo::foo() is declared on line 2
+            assert_eq!(
+                location.range.start.line, 2,
+                "Should point to foo() in trait Foo (line 2), not User::foo() (line 8)"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+/// Clicking on the original method name `foo` in `foo as __foo` should
+/// jump to the trait's `foo()` method even when the class overrides it.
+#[tokio::test]
+async fn test_goto_definition_trait_alias_original_name_when_class_overrides() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///trait_alias_orig_override.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "trait Foo {\n",
+        "    public function foo(): string { return 'foo'; }\n",
+        "}\n",
+        "class User {\n",
+        "    use Foo {\n",
+        "        foo as __foo;\n",
+        "    }\n",
+        "    public function foo(): string {\n",
+        "        return $this->__foo() . 'bar';\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on `foo` (the original method name) in `foo as __foo;` on line 6
+    let line6 = text.lines().nth(6).unwrap();
+    let foo_col = line6.find("foo").unwrap();
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 6,
+                character: foo_col as u32 + 1,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve original method name foo in alias adaptation"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            // Foo::foo() is declared on line 2
+            assert_eq!(
+                location.range.start.line, 2,
+                "Should point to foo() in trait Foo (line 2), not User::foo() (line 8)"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}

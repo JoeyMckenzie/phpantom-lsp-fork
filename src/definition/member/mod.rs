@@ -160,22 +160,42 @@ impl Backend {
             let (effective_name, alias_trait) =
                 Self::resolve_trait_alias(target_class, member_name);
 
-            // If we know the exact source trait from the alias, go directly
-            // to that trait's method definition.
-            if let Some(ref trait_name) = alias_trait
-                && let Some(trait_info) = class_loader(trait_name)
-                && Self::classify_member(&trait_info, &effective_name, access_hint).is_some()
-                && let Some((class_uri, class_content)) =
-                    self.find_class_file_content(trait_name, uri, content)
-                && let Some(member_position) = Self::find_member_position(
-                    &class_content,
-                    &effective_name,
-                    MemberKind::Method,
-                    trait_info.member_name_offset(&effective_name, "method"),
-                )
-                && let Ok(parsed_uri) = Url::parse(&class_uri)
-            {
-                return Some(point_location(parsed_uri, member_position));
+            // When we matched an alias, jump directly to the trait method.
+            // This is important when the class also declares a method with
+            // the same name as the original (e.g. `use Foo { foo as __foo; }`
+            // on a class that also has its own `foo()`).  Without this,
+            // `find_declaring_class` would find the class's own `foo()`
+            // instead of the trait's.
+            let is_alias = effective_name != member_name;
+            if is_alias {
+                // Determine the source trait: use the explicit trait name
+                // from a qualified alias (`TraitA::method as alias`), or
+                // search the class's used traits for the original method.
+                let source_trait_name = alias_trait.clone().or_else(|| {
+                    Self::find_declaring_in_traits(
+                        &target_class.used_traits,
+                        &effective_name,
+                        &class_loader,
+                        0,
+                    )
+                    .map(|(_, fqn)| fqn)
+                });
+
+                if let Some(ref trait_name) = source_trait_name
+                    && let Some(trait_info) = class_loader(trait_name)
+                    && Self::classify_member(&trait_info, &effective_name, access_hint).is_some()
+                    && let Some((class_uri, class_content)) =
+                        self.find_class_file_content(trait_name, uri, content)
+                    && let Some(member_position) = Self::find_member_position(
+                        &class_content,
+                        &effective_name,
+                        MemberKind::Method,
+                        trait_info.member_name_offset(&effective_name, "method"),
+                    )
+                    && let Ok(parsed_uri) = Url::parse(&class_uri)
+                {
+                    return Some(point_location(parsed_uri, member_position));
+                }
             }
 
             // ── Scope method mapping ────────────────────────────────
