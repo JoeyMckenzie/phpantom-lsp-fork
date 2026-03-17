@@ -110,6 +110,13 @@ impl Backend {
                 continue;
             }
 
+            // Skip spread arguments — a single `...$args` may expand into
+            // multiple parameters, so any single parameter name would be
+            // misleading.
+            if call_site.spread_arg_indices.contains(&(arg_idx as u32)) {
+                continue;
+            }
+
             // Determine which parameter this argument corresponds to.
             // For variadic parameters, all remaining args map to the last param.
             let param_idx = if arg_idx < params.len() {

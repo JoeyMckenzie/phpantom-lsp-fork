@@ -108,24 +108,6 @@ parameters in order.
 
 ---
 
-## B8. Inlay hints: spread arguments get a misleading parameter hint
-
-**Impact: Low-Medium · Effort: Low**
-
-When a call uses argument unpacking (`...$args`), the spread argument
-is labeled with the next positional parameter name (e.g. `b:`), but
-the spread could expand into multiple parameters. The `has_unpacking`
-field on `CallSite` exists but is never read by `emit_parameter_hints`.
-
-**Fix:** Skip parameter name hints for arguments that use the spread
-operator. Either bail out entirely when `has_unpacking` is true, or
-track which specific argument indices have ellipsis and skip just
-those.
-
-**File:** `src/inlay_hints.rs`.
-
----
-
 ## B9. Update docblock action misparses `@param $name` with no type
 
 **Impact: Low-Medium · Effort: Low**

@@ -2189,6 +2189,7 @@ fn emit_call_site(
     // track which arguments use named syntax (`name: value`).
     let mut arg_offsets = Vec::with_capacity(arg_count as usize);
     let mut named_arg_indices = Vec::new();
+    let mut spread_arg_indices = Vec::new();
     for (i, arg) in argument_list.arguments.iter().enumerate() {
         match arg {
             Argument::Positional(pos) => {
@@ -2201,6 +2202,9 @@ fn emit_call_site(
                     .map(|e| e.start.offset)
                     .unwrap_or_else(|| pos.value.span().start.offset);
                 arg_offsets.push(offset);
+                if pos.ellipsis.is_some() {
+                    spread_arg_indices.push(i as u32);
+                }
             }
             Argument::Named(named) => {
                 arg_offsets.push(named.name.span.start.offset);
@@ -2226,6 +2230,7 @@ fn emit_call_site(
         arg_count,
         has_unpacking,
         named_arg_indices,
+        spread_arg_indices,
     });
 }
 

@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **PHPStan diagnostics.** Fixed a path matching false positive where files with similar name suffixes (e.g. `AFoo.php` vs `Foo.php`) could receive each other's PHPStan diagnostics.
 - **Implementation error diagnostics.** Cyclic class or interface hierarchies caused by user error (e.g. `interface A extends B` and `interface B extends A`) no longer cause a stack overflow crash.
+- **Inlay hints.** Spread arguments (`...$args`) no longer receive a misleading single-parameter-name hint. Only the spread argument is suppressed; surrounding positional arguments still get their hints.
 - **Trait alias go-to-definition.** Clicking a trait alias (e.g. `$this->__foo()` from `use Foo { foo as __foo; }`) now jumps to the trait method instead of the class's own same-named method. Previously, when the class also declared a method with the original name, the alias resolved to the class method rather than the trait method it aliases.
 - **Diagnostics.** Scalar member access errors now detect method-return chains where an intermediate call returns a scalar type (e.g. `$user->getName()->trim()` correctly reports "Cannot access method 'trim' on type 'string'").
 - **Diagnostics.** By-reference `@param` annotations (e.g. `@param array<int> &$data`) no longer produce a false "unknown class '$data'" diagnostic.

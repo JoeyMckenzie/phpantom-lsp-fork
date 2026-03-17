@@ -674,3 +674,78 @@ function demo(): void {
         lbls
     );
 }
+
+// ─── Spread argument suppression ────────────────────────────────────────────
+
+#[tokio::test]
+async fn spread_argument_gets_no_hint() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/inlay.php").unwrap();
+    let text = r#"<?php
+function greet(string $name, int $age, string $city): void {}
+$args = ['Alice', 25, 'NYC'];
+greet(...$args);
+"#;
+
+    let hints = inlay_hints_for(&backend, &uri, text).await;
+    let line_hints = hints_at_line(&hints, 3);
+
+    assert!(
+        line_hints.is_empty(),
+        "spread argument should not get a parameter hint, got {:?}",
+        labels(&line_hints)
+    );
+}
+
+#[tokio::test]
+async fn spread_after_positional_suppresses_only_spread() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/inlay.php").unwrap();
+    let text = r#"<?php
+function greet(string $name, int $age, string $city): void {}
+$rest = [25, 'NYC'];
+greet('Alice', ...$rest);
+"#;
+
+    let hints = inlay_hints_for(&backend, &uri, text).await;
+    let line_hints = hints_at_line(&hints, 3);
+
+    // The first positional argument should still get its hint.
+    assert_eq!(
+        line_hints.len(),
+        1,
+        "expected 1 hint for the positional arg, got {:?}",
+        labels(&line_hints)
+    );
+    assert_eq!(hint_label(line_hints[0]), "name:");
+}
+
+#[tokio::test]
+async fn positional_args_before_and_after_spread_only_spread_suppressed() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/inlay.php").unwrap();
+    // PHP allows positional args after a spread in some cases.
+    // Even if it's unusual, we should only suppress the spread arg.
+    let text = r#"<?php
+function multi(string $a, int $b, string $c): void {}
+$mid = [42];
+multi('first', ...$mid, 'last');
+"#;
+
+    let hints = inlay_hints_for(&backend, &uri, text).await;
+    let line_hints = hints_at_line(&hints, 3);
+
+    let lbls = labels(&line_hints);
+    // The spread argument (...$mid) should have no hint.
+    // The positional arguments should still get hints.
+    assert!(
+        lbls.contains(&"a:".to_string()),
+        "expected a: hint for first positional arg, got {:?}",
+        lbls
+    );
+    assert!(
+        !lbls.iter().any(|l| l == "b:"),
+        "spread arg should not get b: hint, got {:?}",
+        lbls
+    );
+}

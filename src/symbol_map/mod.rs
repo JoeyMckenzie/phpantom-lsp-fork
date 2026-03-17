@@ -199,6 +199,10 @@ pub(crate) struct CallSite {
     /// (e.g. `name: $value`).  Inlay hints are suppressed for these
     /// because the parameter name is already visible in source.
     pub named_arg_indices: Vec<u32>,
+    /// Indices (into `arg_offsets`) of arguments that use the `...`
+    /// spread/unpacking operator.  Inlay hints are suppressed for these
+    /// because a single spread argument may expand into multiple parameters.
+    pub spread_arg_indices: Vec<u32>,
 }
 
 // ─── Variable definition site structures ────────────────────────────────────
