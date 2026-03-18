@@ -128,17 +128,16 @@ impl Backend {
         prefixes.iter().any(|p| uri_str.starts_with(p.as_str()))
     }
 
-    /// Collect Phase 1 (fast) diagnostics: syntax errors, deprecated
-    /// usage, unused imports.  These are cheap — no type resolution.
+    /// Collect Phase 1 (fast) diagnostics: syntax errors, unused
+    /// imports.  These are cheap — no type resolution.
     fn collect_fast_diagnostics(&self, uri_str: &str, content: &str, out: &mut Vec<Diagnostic>) {
         self.collect_syntax_error_diagnostics(uri_str, content, out);
-        self.collect_deprecated_diagnostics(uri_str, content, out);
         self.collect_unused_import_diagnostics(uri_str, content, out);
     }
 
     /// Collect Phase 2 (slow) diagnostics: unknown class/member/function,
-    /// argument count, implementation errors.  These require type
-    /// resolution and are expensive.
+    /// argument count, implementation errors, deprecated usage.  These
+    /// require type resolution and are expensive.
     fn collect_slow_diagnostics(&self, uri_str: &str, content: &str, out: &mut Vec<Diagnostic>) {
         self.collect_unknown_class_diagnostics(uri_str, content, out);
         self.collect_unknown_member_diagnostics(uri_str, content, out);
@@ -146,6 +145,7 @@ impl Backend {
         self.collect_unresolved_member_access_diagnostics(uri_str, content, out);
         self.collect_argument_count_diagnostics(uri_str, content, out);
         self.collect_implementation_error_diagnostics(uri_str, content, out);
+        self.collect_deprecated_diagnostics(uri_str, content, out);
     }
 
     /// Build a merged diagnostic set from fresh fast diagnostics,
@@ -216,6 +216,12 @@ impl Backend {
         // Merge fresh fast with cached slow + PHPStan so the editor
         // never shows a gap where those diagnostics vanish then
         // reappear.
+        //
+        // Even in pull mode we push Phase 1 via publish_diagnostics so
+        // users see syntax errors and unused-import warnings instantly,
+        // without waiting for a pull round-trip. Phase 2 (slow) results
+        // are delivered via pull after workspace/diagnostic/refresh.
+        // This is intentional — do not remove the push here.
         let mut fast_diagnostics = Vec::new();
         self.collect_fast_diagnostics(uri_str, content, &mut fast_diagnostics);
 
@@ -763,11 +769,7 @@ fn byte_offset_to_position(content: &str, byte_offset: usize) -> Option<Position
     if byte_offset > content.len() {
         return None;
     }
-    let before = &content[..byte_offset];
-    let line = before.matches('\n').count() as u32;
-    let last_newline = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let character = before[last_newline..].encode_utf16().count() as u32;
-    Some(Position { line, character })
+    Some(crate::util::offset_to_position(content, byte_offset))
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

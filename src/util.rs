@@ -208,7 +208,7 @@ pub(crate) fn collect_php_files_gitignore(
 /// Convert a byte offset in `content` to an LSP `Position` (line, character).
 ///
 /// This is the inverse of [`position_to_byte_offset`].  Characters are
-/// counted as single-byte (sufficient for the vast majority of PHP source).
+/// counted as UTF-16 code units per the LSP specification.
 /// If `offset` is past the end of `content`, the position at the end of
 /// the file is returned.
 pub(crate) fn offset_to_position(content: &str, offset: usize) -> Position {
@@ -225,7 +225,7 @@ pub(crate) fn offset_to_position(content: &str, offset: usize) -> Position {
             line += 1;
             col = 0;
         } else {
-            col += 1;
+            col += ch.len_utf16() as u32;
         }
     }
     // offset == content.len() (end of file)
@@ -238,27 +238,28 @@ pub(crate) fn offset_to_position(content: &str, offset: usize) -> Position {
 /// Convert an LSP `Position` (line, character) to a byte offset in
 /// `content`.
 ///
-/// Characters are treated as single-byte (sufficient for the vast
-/// majority of PHP source).  If the position is past the end of the
-/// file, the content length is returned.
+/// Characters are counted as UTF-16 code units per the LSP specification.
+/// If the position is past the end of the file, the content length is
+/// returned.
 pub(crate) fn position_to_byte_offset(content: &str, position: Position) -> usize {
-    let mut offset = 0usize;
-    for (line_idx, line) in content.lines().enumerate() {
-        if line_idx == position.line as usize {
-            let char_offset = position.character as usize;
-            // Convert character offset (UTF-16 code units in LSP) to byte offset.
-            // For simplicity, treat characters as single-byte (ASCII).
-            // This is sufficient for most PHP code.
-            let byte_col = line
-                .char_indices()
-                .nth(char_offset)
-                .map(|(idx, _)| idx)
-                .unwrap_or(line.len());
-            return offset + byte_col;
+    let mut line = 0u32;
+    let mut col = 0u32;
+    for (i, ch) in content.char_indices() {
+        if line == position.line && col == position.character {
+            return i;
         }
-        offset += line.len() + 1; // +1 for newline
+        if ch == '\n' {
+            if line == position.line {
+                // Position is past the end of this line — clamp to newline.
+                return i;
+            }
+            line += 1;
+            col = 0;
+        } else {
+            col += ch.len_utf16() as u32;
+        }
     }
-    // If the position is past the last line, return end of content
+    // Position at end of content.
     content.len()
 }
 

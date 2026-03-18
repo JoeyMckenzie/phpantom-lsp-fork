@@ -45,8 +45,8 @@ impl Backend {
         params: &CodeActionParams,
         out: &mut Vec<CodeActionOrCommand>,
     ) {
-        let request_start = offset_from_position(content, params.range.start);
-        let request_end = offset_from_position(content, params.range.end);
+        let request_start = crate::util::position_to_byte_offset(content, params.range.start);
+        let request_end = crate::util::position_to_byte_offset(content, params.range.end);
 
         let symbol_map = {
             let maps = self.symbol_maps.read();
@@ -484,28 +484,6 @@ fn find_subject_start(content: &str, member_start: usize, is_static: bool) -> us
     }
 
     pos
-}
-
-/// Convert an LSP `Position` to a byte offset in `content`.
-fn offset_from_position(content: &str, pos: Position) -> usize {
-    let mut line = 0u32;
-    let mut col = 0u32;
-    for (i, ch) in content.char_indices() {
-        if line == pos.line && col == pos.character {
-            return i;
-        }
-        if ch == '\n' {
-            if line == pos.line {
-                // Position is past the end of this line — clamp.
-                return i;
-            }
-            line += 1;
-            col = 0;
-        } else {
-            col += ch.len_utf16() as u32;
-        }
-    }
-    content.len()
 }
 
 /// Resolve a member access subject to a `ClassInfo`.

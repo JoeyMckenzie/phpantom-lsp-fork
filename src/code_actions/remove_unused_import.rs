@@ -820,13 +820,6 @@ mod tests {
 
     /// Convert an LSP Position to a byte offset in content.
     fn lsp_position_to_byte_offset(content: &str, pos: &Position) -> usize {
-        let mut offset = 0;
-        for (i, line) in content.split('\n').enumerate() {
-            if i == pos.line as usize {
-                return offset + pos.character as usize;
-            }
-            offset += line.len() + 1; // +1 for '\n'
-        }
-        offset
+        crate::util::position_to_byte_offset(content, *pos)
     }
 }

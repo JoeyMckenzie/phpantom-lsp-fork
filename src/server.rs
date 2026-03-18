@@ -736,21 +736,37 @@ impl LanguageServer for Backend {
 
         let php_version = self.php_version();
 
-        // Execute the resolved formatting strategy.
-        match formatting::execute_strategy(
-            &strategy,
-            &content,
-            &file_path,
-            &config.formatting,
-            php_version,
-        ) {
-            Ok(edits) => Ok(edits),
-            Err(e) => {
+        // Execute the resolved formatting strategy on a blocking thread
+        // to avoid stalling the async runtime while external tools run.
+        let formatting_config = config.formatting.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            formatting::execute_strategy(
+                &strategy,
+                &content,
+                &file_path,
+                &formatting_config,
+                php_version,
+            )
+        })
+        .await;
+
+        match result {
+            Ok(Ok(edits)) => Ok(edits),
+            Ok(Err(e)) => {
                 self.log(MessageType::ERROR, format!("Formatting failed: {}", e))
                     .await;
                 Err(tower_lsp::jsonrpc::Error {
                     code: tower_lsp::jsonrpc::ErrorCode::InternalError,
                     message: format!("Formatting failed: {}", e).into(),
+                    data: None,
+                })
+            }
+            Err(join_err) => {
+                let msg = format!("Formatting task panicked: {}", join_err);
+                self.log(MessageType::ERROR, msg.clone()).await;
+                Err(tower_lsp::jsonrpc::Error {
+                    code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                    message: msg.into(),
                     data: None,
                 })
             }

@@ -117,7 +117,7 @@ pub fn position_to_char_offset(chars: &[char], position: Position) -> Option<usi
             line += 1;
             col = 0;
         } else {
-            col += 1;
+            col += ch.len_utf16();
         }
     }
 

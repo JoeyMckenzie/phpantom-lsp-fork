@@ -53,12 +53,8 @@ impl Backend {
             .unwrap_or_default();
 
         // Convert LSP range to byte offsets for comparison with symbol spans.
-        let request_start = position_to_offset(content, params.range.start);
-        let request_end = position_to_offset(content, params.range.end);
-        let (request_start, request_end) = match (request_start, request_end) {
-            (Some(s), Some(e)) => (s, e),
-            _ => return,
-        };
+        let request_start = crate::util::position_to_byte_offset(content, params.range.start);
+        let request_end = crate::util::position_to_byte_offset(content, params.range.end);
 
         // ── Find ClassReference spans overlapping the request range ─────
         let affinity_table = crate::completion::class_completion::build_affinity_table(
@@ -406,68 +402,9 @@ impl Backend {
     }
 }
 
-/// Convert an LSP `Position` (0-based line/character) to a byte offset
-/// in `content`.
-///
-/// Returns `None` if the position is beyond the end of the content.
-fn position_to_offset(content: &str, position: Position) -> Option<usize> {
-    let mut line: u32 = 0;
-    let mut col: u32 = 0;
-    for (i, ch) in content.char_indices() {
-        if line == position.line && col == position.character {
-            return Some(i);
-        }
-        if ch == '\n' {
-            if line == position.line {
-                // Position is past the end of this line — clamp to newline.
-                return Some(i);
-            }
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    // Position at end of content.
-    if line == position.line && col == position.character {
-        Some(content.len())
-    } else if line == position.line {
-        // Character past end of last line — clamp to end.
-        Some(content.len())
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── position_to_offset tests ────────────────────────────────────────
-
-    #[test]
-    fn position_to_offset_start() {
-        let content = "hello\nworld\n";
-        assert_eq!(position_to_offset(content, Position::new(0, 0)), Some(0));
-    }
-
-    #[test]
-    fn position_to_offset_mid_line() {
-        let content = "hello\nworld\n";
-        assert_eq!(position_to_offset(content, Position::new(0, 3)), Some(3));
-    }
-
-    #[test]
-    fn position_to_offset_second_line() {
-        let content = "hello\nworld\n";
-        assert_eq!(position_to_offset(content, Position::new(1, 0)), Some(6));
-    }
-
-    #[test]
-    fn position_to_offset_end_of_content() {
-        let content = "hi";
-        assert_eq!(position_to_offset(content, Position::new(0, 2)), Some(2));
-    }
 
     // ── find_import_candidates smoke test ───────────────────────────────
 

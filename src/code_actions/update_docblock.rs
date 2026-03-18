@@ -100,7 +100,7 @@ impl Backend {
             Err(_) => return,
         };
 
-        let cursor_offset = position_to_offset_ud(content, params.range.start);
+        let cursor_offset = crate::util::position_to_offset(content, params.range.start);
 
         let arena = Bump::new();
         let file_id = mago_database::file::FileId::new("input.php");
@@ -1357,24 +1357,6 @@ fn rebuild_docblock(lines: &[DocLine], indent: &str) -> String {
     }
 
     result
-}
-
-/// Convert an LSP position to a byte offset.
-fn position_to_offset_ud(content: &str, position: Position) -> u32 {
-    let mut offset = 0usize;
-    for (line_idx, line) in content.split('\n').enumerate() {
-        if line_idx == position.line as usize {
-            let char_offset = position.character as usize;
-            let byte_col = line
-                .char_indices()
-                .nth(char_offset)
-                .map(|(i, _)| i)
-                .unwrap_or(line.len());
-            return (offset + byte_col) as u32;
-        }
-        offset += line.len() + 1;
-    }
-    offset as u32
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
