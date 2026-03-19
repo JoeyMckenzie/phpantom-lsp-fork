@@ -840,6 +840,16 @@ impl Backend {
     pub(crate) async fn progress_create(&self, token_name: &str) -> Option<NumberOrString> {
         use tower_lsp::lsp_types::request::WorkDoneProgressCreate;
 
+        // Per the LSP spec, servers must only use
+        // window/workDoneProgress/create when the client signals
+        // support via the window.workDoneProgress capability.
+        if !self
+            .supports_work_done_progress
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return None;
+        }
+
         let client = self.client.as_ref()?;
         let token = NumberOrString::String(token_name.to_string());
         let params = WorkDoneProgressCreateParams {

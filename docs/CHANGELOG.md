@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Progress notifications.** The server no longer sends `window/workDoneProgress/create` requests to clients that do not advertise support for it. Previously this could block clients indefinitely while they waited for a response that never came.
 - **Change visibility.** The code action no longer appears when the cursor is inside a method body. It now only triggers on the method signature (modifiers, name, parameters, return type).
 - **Update docblock.** The code action no longer appears when the cursor is inside a function or method body. It now only triggers on the signature or the preceding docblock.
 - **Update docblock.** No longer suggests adding redundant `@param` tags when the docblock has no `@param` tags and all parameters already have sufficient native type hints. This matches the generate-docblock behaviour, which intentionally omits `@param` for fully-typed non-templated parameters.

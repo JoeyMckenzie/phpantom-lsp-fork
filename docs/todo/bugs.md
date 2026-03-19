@@ -55,3 +55,19 @@ In practice this is unlikely because pruning only ever removes entries
 **Fix:** Replace the length comparison with a content comparison, or
 unconditionally write the pruned set back into the cache (the extra
 write is negligible).
+
+---
+
+## B13 — Hover shows dummy symbols
+
+| Impact | Effort |
+| ------ | ------ |
+| Medium | Low    |
+
+When hovering over certain constructs the hover popup displays
+internal dummy/placeholder symbols instead of filtering them out.
+These symbols are not meaningful to the user and clutter the hover
+output.
+
+**Fix:** Filter out dummy symbols before building the hover response
+so only real, user-relevant information is shown.

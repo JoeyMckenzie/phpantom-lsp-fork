@@ -80,6 +80,18 @@ impl LanguageServer for Backend {
         self.supports_file_rename
             .store(client_supports_file_rename, Ordering::Release);
 
+        // Detect whether the client supports server-initiated work-done
+        // progress (window/workDoneProgress/create).  Per the LSP spec,
+        // we must not send that request unless the client opts in.
+        let client_supports_work_done_progress = params
+            .capabilities
+            .window
+            .as_ref()
+            .and_then(|w| w.work_done_progress)
+            .unwrap_or(false);
+        self.supports_work_done_progress
+            .store(client_supports_work_done_progress, Ordering::Release);
+
         Ok(InitializeResult {
             offset_encoding: None,
             capabilities: ServerCapabilities {

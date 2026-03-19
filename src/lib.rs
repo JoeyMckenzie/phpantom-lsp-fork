@@ -438,6 +438,13 @@ pub struct Backend {
     /// the rename response includes a `RenameFile` operation alongside the
     /// text edits so the file is renamed to match the new class name.
     pub(crate) supports_file_rename: Arc<std::sync::atomic::AtomicBool>,
+    /// Whether the client supports server-initiated work-done progress.
+    ///
+    /// Set during `initialize` based on the client's
+    /// `window.workDoneProgress` capability.  When `false`, the server
+    /// must not send `window/workDoneProgress/create` requests because
+    /// the client will not handle them, blocking the server indefinitely.
+    pub(crate) supports_work_done_progress: Arc<std::sync::atomic::AtomicBool>,
     /// Shared flag set to `true` when the LSP `shutdown` request is
     /// received.  Background workers (diagnostic, PHPStan) check this
     /// flag on each iteration and exit their loops.  The PHPStan
@@ -504,6 +511,7 @@ impl Backend {
             diag_last_full: Arc::new(Mutex::new(HashMap::new())),
             supports_pull_diagnostics: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             supports_file_rename: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            supports_work_done_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config: Mutex::new(config::Config::default()),
         }
@@ -702,6 +710,7 @@ impl Backend {
             diag_last_full: Arc::clone(&self.diag_last_full),
             supports_pull_diagnostics: Arc::clone(&self.supports_pull_diagnostics),
             supports_file_rename: Arc::clone(&self.supports_file_rename),
+            supports_work_done_progress: Arc::clone(&self.supports_work_done_progress),
             shutdown_flag: Arc::clone(&self.shutdown_flag),
             config: Mutex::new(self.config.lock().clone()),
         }

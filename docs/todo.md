@@ -19,6 +19,12 @@ within the same impact tier.
 
 # Scheduled Sprints
 
+## Sprint 3 — Bug fixes
+
+| #   | Item                                              | Impact | Effort |
+| --- | ------------------------------------------------- | ------ | ------ |
+| B13 | [Stop showing dummy symbols in hover](todo/bugs.md#b13--hover-shows-dummy-symbols) | Medium | Low    |
+
 ## Sprint 4 — Refactoring toolkit
 
 | #   | Item                                                                               | Impact | Effort |
