@@ -44,6 +44,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::parser::with_parse_cache;
+
 use tower_lsp::lsp_types::*;
 
 use crate::Backend;
@@ -214,6 +216,15 @@ impl Backend {
         let class_loader = self.class_loader_with(&local_classes, &file_use_map, &file_namespace);
         let function_loader = self.function_loader_with(&file_use_map, &file_namespace);
         let resolved_cache = &self.resolved_class_cache;
+
+        // ── Parse cache for this diagnostic pass ────────────────────────
+        // The file content is immutable during a single diagnostic pass.
+        // Activating the thread-local parse cache means every call to
+        // `with_parsed_program(content, …)` in the resolution pipeline
+        // (resolve_variable_types, resolve_variable_assignment_raw_type,
+        // resolve_variable_type_string, etc.) will reuse the same parsed
+        // AST instead of re-parsing the entire file from scratch.
+        let _parse_guard = with_parse_cache(content);
 
         // ── Subject resolution cache for this diagnostic pass ───────────
         let mut subject_cache: SubjectCache = HashMap::new();

@@ -15,30 +15,4 @@ within the same impact tier.
 
 ---
 
-## B14. Redundant file re-parsing in unknown-member diagnostics
-
-- **Impact:** Medium · **Effort:** Medium-High
-
-The subject deduplication cache (per-pass `SubjectCache`) eliminated
-the worst case where identical subjects were resolved hundreds of
-times. However, each *unique* subject that goes through variable
-resolution still calls `with_parsed_program`, which re-parses the
-entire file from scratch. For unresolved subjects, the secondary
-helpers (`resolve_scalar_subject_type`,
-`resolve_unresolvable_class_subject`) add further re-parses. A
-single unique untyped variable subject can trigger up to 6 full
-re-parses of the file.
-
-In files with many distinct variable subjects (e.g. different
-`$var1->`, `$var2->`, `$var3->` accesses), the parsing cost still
-adds up even with the subject cache.
-
-### Fix — parse caching within a diagnostic pass
-
-The file content is immutable during a single diagnostic pass.
-Caching the parsed `Program` AST once and threading it through the
-resolution calls would eliminate all redundant parsing, reducing
-even the per-unique-subject cost. This is a larger refactor because
-`with_parsed_program` is used across many modules and the `Program`
-type borrows from a `bumpalo::Bump` arena that must stay alive.
-
+*No known bugs at this time.*

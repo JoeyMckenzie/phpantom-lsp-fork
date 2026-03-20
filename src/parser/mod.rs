@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// PHP parsing and AST extraction.
@@ -576,6 +577,126 @@ fn extract_string_literal_value(
     }
 }
 
+// ─── Thread-local parse cache ───────────────────────────────────────────────
+//
+// During a single diagnostic pass the file content is immutable and
+// `with_parsed_program` may be called dozens of times for the same
+// content string (once per unique variable subject, plus secondary
+// helpers).  Each call allocates a fresh `Bump` arena and re-parses the
+// entire file from scratch.
+//
+// The cache below stores the `Bump` arena, the owned content `String`,
+// and a raw pointer to the `Program` that was parsed from them.  When
+// `with_parsed_program` is called while the cache is active *and* the
+// content matches, the cached `Program` is reused — eliminating all
+// redundant parses.
+//
+// The cache is activated by [`with_parse_cache`] which sets it up at
+// the start of a block and tears it down (via `Drop`) when the block
+// finishes.  Outside that scope `with_parsed_program` behaves exactly
+// as before.
+//
+// ## Safety
+//
+// The `Program<'arena>` borrows from the `Bump` arena.  Both live
+// inside the `Option<ParseCacheEntry>` stored in the thread-local
+// `RefCell`.  The raw pointer is reconstituted to a reference only
+// while the `RefCell` borrow is held and the entry is `Some`, so the
+// arena is guaranteed to be alive.  The cache entry is cleared (and the
+// arena dropped) by [`ParseCacheGuard::drop`] before any outside code
+// can observe a dangling pointer.
+
+/// Cached arena + content + parsed program for the current thread.
+struct ParseCacheEntry {
+    /// Bump arena that owns all AST nodes.  Must outlive `program_ptr`.
+    _arena: bumpalo::Bump,
+    /// Owned copy of the source text.  Must outlive `program_ptr`.
+    content: String,
+    /// Raw pointer to the `Program` allocated in `_arena`.
+    /// Reconstituted to `&Program<'_>` only while the `RefCell` borrow
+    /// is held and the entry is `Some`.
+    program_ptr: *const (),
+}
+
+// `ParseCacheEntry` is only ever accessed from the thread that created
+// it (via `thread_local!`), but we store a raw pointer so Rust can't
+// prove `Send`/`Sync` automatically.  The pointer is never shared
+// across threads.
+unsafe impl Send for ParseCacheEntry {}
+
+thread_local! {
+    static PARSE_CACHE: RefCell<Option<ParseCacheEntry>> = const { RefCell::new(None) };
+}
+
+/// RAII guard that clears the thread-local parse cache on drop.
+///
+/// Created by [`with_parse_cache`].  Must not be leaked (e.g. via
+/// `std::mem::forget`) — doing so would leave a stale cache entry
+/// that could outlive the original content string.
+pub(crate) struct ParseCacheGuard {
+    /// `true` when this guard owns the cache entry and must clear it
+    /// on drop.  Nested (no-op) guards have `owns_cache = false` and
+    /// leave the entry untouched.
+    owns_cache: bool,
+}
+
+impl Drop for ParseCacheGuard {
+    fn drop(&mut self) {
+        if self.owns_cache {
+            PARSE_CACHE.with(|cell| {
+                *cell.borrow_mut() = None;
+            });
+        }
+    }
+}
+
+/// Activate the thread-local parse cache for `content`.
+///
+/// While the returned [`ParseCacheGuard`] is alive, every call to
+/// [`with_parsed_program`] whose `content` argument is byte-equal to
+/// the cached content will reuse the already-parsed `Program` instead
+/// of re-parsing.
+///
+/// Typical usage:
+///
+/// ```ignore
+/// let _guard = with_parse_cache(content);
+/// // … many calls to resolve_variable_types / resolve_variable_type_string / etc.
+/// // All of them hit the cache instead of re-parsing.
+/// // Guard is dropped here, clearing the cache.
+/// ```
+pub(crate) fn with_parse_cache(content: &str) -> ParseCacheGuard {
+    // If there's already an active cache (nested call), just return a
+    // no-op guard — the outermost guard owns the lifetime.
+    let already_active = PARSE_CACHE.with(|cell| cell.borrow().is_some());
+    if already_active {
+        return ParseCacheGuard { owns_cache: false };
+    }
+
+    let content_owned = content.to_string();
+
+    // Parse once and cache the result.
+    let arena = bumpalo::Bump::new();
+    let file_id = mago_database::file::FileId::new("input.php");
+
+    // SAFETY: `program` borrows from `arena` and `content_owned`.
+    // Both are moved into `ParseCacheEntry` immediately after this
+    // call and live until the guard is dropped.  The raw pointer is
+    // only reconstituted while the `RefCell` borrow is held.
+    let program = mago_syntax::parser::parse_file_content(&arena, file_id, &content_owned);
+    let program_ptr: *const () = (program as *const Program<'_>).cast();
+
+    PARSE_CACHE.with(|cell| {
+        *cell.borrow_mut() = Some(ParseCacheEntry {
+            _arena: arena,
+            content: content_owned,
+            program_ptr,
+        });
+    });
+
+    ParseCacheGuard { owns_cache: true }
+}
+
 /// Parse `content` with the mago-syntax parser and pass the resulting
 /// `Program` (plus the content string) to `f`.
 ///
@@ -585,11 +706,42 @@ fn extract_string_literal_value(
 /// `catch_unwind` so that a parser panic doesn't crash the LSP
 /// server.  On panic the error is logged (using `method_name` for
 /// context) and `T::default()` is returned.
+///
+/// When the thread-local parse cache is active (see
+/// [`with_parse_cache`]) and `content` matches the cached content,
+/// the previously parsed `Program` is reused — no allocation or
+/// parsing occurs.
 pub(crate) fn with_parsed_program<T: Default>(
     content: &str,
     method_name: &str,
     f: impl FnOnce(&Program<'_>, &str) -> T,
 ) -> T {
+    // ── Fast path: check the thread-local cache ─────────────────
+    // We check for a hit *without* consuming `f` so that it remains
+    // available for the slow path if the cache misses.
+    let has_cache_hit: bool = PARSE_CACHE.with(|cell| {
+        let borrow = cell.borrow();
+        match borrow.as_ref() {
+            Some(e) => e.content == content,
+            None => false,
+        }
+    });
+
+    if has_cache_hit {
+        return PARSE_CACHE.with(|cell| {
+            let borrow = cell.borrow();
+            let entry = borrow.as_ref().unwrap();
+            // SAFETY: `program_ptr` was created from a valid `&Program`
+            // whose backing arena (`_arena`) and content string (`content`)
+            // are still alive inside `entry`.  We hold a `Ref` borrow on
+            // the `RefCell`, so the entry cannot be mutated or dropped
+            // while we use the reference.
+            let program: &Program<'_> = unsafe { &*(entry.program_ptr.cast::<Program<'_>>()) };
+            f(program, &entry.content)
+        });
+    }
+
+    // ── Slow path: parse from scratch ───────────────────────────
     let content_owned = content.to_string();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let arena = bumpalo::Bump::new();

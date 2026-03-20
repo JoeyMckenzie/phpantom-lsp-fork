@@ -170,8 +170,6 @@ unlikely to move the needle for most users.
 | X5  | Granular progress reporting for indexing, GTI, and Find References                                                                                           | Low-Medium | Medium      |
 | X4  | Full background indexing (`strategy = "full"`)                                                                                                               | Medium     | High        |
 | X6  | Disk cache (evaluate later)                                                                                                                                  | Medium     | High        |
-|     | **[Bug Fixes](todo/bugs.md)**                                                                                                                                |            |             |
-| B14 | [Redundant file re-parsing in unknown-member diagnostics](todo/bugs.md#b14-redundant-file-re-parsing-in-unknown-member-diagnostics)                          | Medium     | Medium-High |
 |     | **[Inline Completion](todo/inline-completion.md)**                                                                                                           |            |             |
 | N1  | Template engine (type-aware snippets)                                                                                                                        | Medium     | High        |
 | N2  | N-gram prediction from PHP corpus                                                                                                                            | Medium     | Very High   |
