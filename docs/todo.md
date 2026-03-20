@@ -37,6 +37,22 @@ within the same impact tier.
 | A7  | [Promote constructor parameter](todo/actions.md#a7-promote-constructor-parameter)  | Medium | Low    |
 |     | **Release 0.7.0**                                                                  |        |        |
 
+## Sprint 4a — Mago foundation: Composer + Docblock + Names
+
+| #   | Item                                                        | Impact | Effort      |
+| --- | ----------------------------------------------------------- | ------ | ----------- |
+|     | Clear [refactoring gate](todo/refactor.md)                  | —      | —           |
+| M1  | [Migrate to mago-composer](todo/mago.md#m1-mago-composer)   | Low    | Low         |
+| M2  | [Migrate to mago-docblock](todo/mago.md#m2-mago-docblock)   | High   | Medium      |
+| M3  | [Migrate to mago-names](todo/mago.md#m3-mago-names)         | High   | Medium-High |
+
+## Sprint 4b — Mago foundation: Type Syntax
+
+| #   | Item                                                              | Impact   | Effort    |
+| --- | ----------------------------------------------------------------- | -------- | --------- |
+|     | Clear [refactoring gate](todo/refactor.md)                        | —        | —         |
+| M4  | [Migrate to mago-type-syntax](todo/mago.md#m4-mago-type-syntax)  | Critical | Very High |
+
 ## Sprint 5 — Polish for office adoption
 
 | #   | Item                                                                          | Impact      | Effort |
