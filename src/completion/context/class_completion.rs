@@ -323,6 +323,57 @@ pub(crate) fn detect_class_name_context(content: &str, position: Position) -> Cl
     ClassNameContext::Any
 }
 
+/// Detect whether the cursor is positioned inside a class/interface/trait/enum
+/// declaration name.
+///
+/// Returns `true` when the user is typing the name of a new class-like
+/// declaration, e.g. `class F|`, `abstract class F|`, `interface F|`,
+/// `trait F|`, `enum F|`, `final readonly class F|`, etc.
+///
+/// Returns `false` for anonymous classes (`new class {}`).
+pub(crate) fn is_class_declaration_name(content: &str, position: Position) -> bool {
+    let chars: Vec<char> = content.chars().collect();
+    let Some(offset) = position_to_char_offset(&chars, position) else {
+        return false;
+    };
+
+    // Walk back past the partial identifier (alphanumeric, _).
+    // Declaration names never contain `\`.
+    let mut i = offset;
+    while i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+        i -= 1;
+    }
+
+    // Skip whitespace.
+    while i > 0 && chars[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+
+    // Check for declaration keywords.
+    let is_decl = keyword_ends_at(&chars, i, "class")
+        || keyword_ends_at(&chars, i, "interface")
+        || keyword_ends_at(&chars, i, "trait")
+        || keyword_ends_at(&chars, i, "enum");
+
+    if !is_decl {
+        return false;
+    }
+
+    // For `class`, ensure this is not `new class` (anonymous class).
+    if keyword_ends_at(&chars, i, "class") {
+        let kw_start = i - "class".len();
+        let mut j = kw_start;
+        while j > 0 && chars[j - 1].is_ascii_whitespace() {
+            j -= 1;
+        }
+        if keyword_ends_at(&chars, j, "new") {
+            return false;
+        }
+    }
+
+    true
+}
+
 /// Detect the class-like kind from raw PHP stub source without
 /// full parsing.
 ///

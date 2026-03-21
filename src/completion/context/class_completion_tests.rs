@@ -977,3 +977,103 @@ fn test_class_sort_text_affinity_beats_gap() {
         "Higher affinity should beat smaller gap: high_affinity={high_affinity}, low_affinity={low_affinity}"
     );
 }
+
+// ── is_class_declaration_name ───────────────────────────────────
+
+#[test]
+fn test_is_class_declaration_class() {
+    let content = "<?php\n\nclass T";
+    let pos = Position { line: 2, character: 7 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_no_partial() {
+    let content = "<?php\n\nclass ";
+    let pos = Position { line: 2, character: 6 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_interface() {
+    let content = "<?php\n\ninterface P";
+    let pos = Position { line: 2, character: 11 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_trait() {
+    let content = "<?php\n\ntrait H";
+    let pos = Position { line: 2, character: 7 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_enum() {
+    let content = "<?php\n\nenum S";
+    let pos = Position { line: 2, character: 6 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_abstract_class() {
+    let content = "<?php\n\nabstract class B";
+    let pos = Position { line: 2, character: 16 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_final_class() {
+    let content = "<?php\n\nfinal class S";
+    let pos = Position { line: 2, character: 13 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_readonly_class() {
+    let content = "<?php\n\nreadonly class V";
+    let pos = Position { line: 2, character: 16 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_final_readonly_class() {
+    let content = "<?php\n\nfinal readonly class M";
+    let pos = Position { line: 2, character: 22 };
+    assert!(is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_anonymous_class_rejected() {
+    let content = "<?php\n\n$x = new class ";
+    let pos = Position { line: 2, character: 16 };
+    assert!(!is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_extends_rejected() {
+    let content = "<?php\n\nclass Foo extends B";
+    let pos = Position { line: 2, character: 21 };
+    assert!(!is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_implements_rejected() {
+    let content = "<?php\n\nclass Foo implements S";
+    let pos = Position { line: 2, character: 25 };
+    assert!(!is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_new_keyword_rejected() {
+    let content = "<?php\n\n$x = new Foo";
+    let pos = Position { line: 2, character: 12 };
+    assert!(!is_class_declaration_name(content, pos));
+}
+
+#[test]
+fn test_is_class_declaration_with_namespace() {
+    let content = "<?php\n\nnamespace App\\Services;\n\nclass O";
+    let pos = Position { line: 4, character: 7 };
+    assert!(is_class_declaration_name(content, pos));
+}

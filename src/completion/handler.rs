@@ -37,6 +37,7 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::completion::class_completion::{
     ClassCompletionParams, ClassNameContext, detect_class_name_context,
+    is_class_declaration_name,
 };
 use crate::completion::named_args::{NamedArgContext, parse_existing_args};
 use crate::docblock::types::PHPDOC_TYPE_KEYWORDS;
@@ -315,6 +316,15 @@ impl Backend {
 
             // ── `throw new` completion ──────────────────────────────
             if let Some(response) = self.try_throw_new_completion(&content, position, &ctx) {
+                return Ok(Some(response));
+            }
+
+            // ── Class declaration name completion ───────────────────
+            // When declaring a new class/interface/trait/enum, suggest
+            // the filename (without extension) as the class name.
+            if let Some(response) =
+                self.try_class_declaration_completion(&uri, &content, position)
+            {
                 return Ok(Some(response));
             }
 
@@ -1064,6 +1074,48 @@ impl Backend {
     ///
     /// Returns `None` when the cursor is not at an identifier position or
     /// when no completions could be produced.
+    /// Suggest the filename (without `.php` extension) as the class name
+    /// when the cursor is inside a class/interface/trait/enum declaration.
+    ///
+    /// Returns a single completion item so the user can quickly name the
+    /// class to match the file, following PSR-4 conventions.
+    fn try_class_declaration_completion(
+        &self,
+        uri: &str,
+        content: &str,
+        position: Position,
+    ) -> Option<CompletionResponse> {
+        if !is_class_declaration_name(content, position) {
+            return None;
+        }
+
+        let name = Self::filename_class_name(uri)?;
+
+        let item = CompletionItem {
+            label: name.clone(),
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some("Match filename".to_string()),
+            insert_text: Some(name),
+            ..CompletionItem::default()
+        };
+
+        Some(CompletionResponse::Array(vec![item]))
+    }
+
+    /// Extract the filename without extension from a `file://` URI.
+    ///
+    /// For example, `file:///home/user/Test.php` returns `Some("Test")`.
+    fn filename_class_name(uri: &str) -> Option<String> {
+        let url = Url::parse(uri).ok()?;
+        let file_path = url.to_file_path().ok()?;
+        let stem = file_path.file_stem()?;
+        let name = stem.to_string_lossy();
+        if name.is_empty() {
+            return None;
+        }
+        Some(name.into_owned())
+    }
+
     fn try_class_constant_function_completion(
         &self,
         content: &str,
