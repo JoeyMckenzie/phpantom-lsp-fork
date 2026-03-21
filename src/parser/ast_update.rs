@@ -349,11 +349,11 @@ impl Backend {
             // When a file's namespace changes (e.g. while the user is
             // typing a namespace declaration), old FQNs linger under
             // the previous namespace and pollute completions.
-            idx.retain(|_, uri| uri != &uri_string);
-
-            // Remove stale fqn_index entries for FQNs that belonged to
-            // the previous version of this file.
+            //
+            // Use targeted removes via old_fqns instead of a full
+            // retain() scan — O(old_classes) ≈ O(1) vs O(class_index).
             for old_fqn in &old_fqns {
+                idx.remove(old_fqn);
                 fqn_idx.remove(old_fqn);
             }
 

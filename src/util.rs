@@ -811,15 +811,36 @@ impl Backend {
     /// method *reads* the three maps, this method *clears* them for a given URI.
     /// Called from `did_close` to clean up state when a file is closed.
     pub(crate) fn clear_file_maps(&self, uri: &str) {
+        // Collect FQNs for targeted class_index removal BEFORE clearing
+        // ast_map — O(file_classes) instead of O(total_class_index).
+        let old_fqns: Vec<String> = self
+            .ast_map
+            .read()
+            .get(uri)
+            .map(|classes| {
+                classes
+                    .iter()
+                    .filter(|c| !c.name.starts_with("__anonymous@"))
+                    .map(|c| match &c.file_namespace {
+                        Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, c.name),
+                        _ => c.name.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         self.ast_map.write().remove(uri);
         self.symbol_maps.write().remove(uri);
         self.use_map.write().remove(uri);
         self.namespace_map.write().remove(uri);
         // Remove class_index entries that belonged to this file so
         // stale FQNs don't linger after the file is closed.
-        self.class_index
-            .write()
-            .retain(|_, file_uri| file_uri != uri);
+        if !old_fqns.is_empty() {
+            let mut idx = self.class_index.write();
+            for fqn in &old_fqns {
+                idx.remove(fqn);
+            }
+        }
     }
 
     pub(crate) async fn log(&self, typ: MessageType, message: String) {

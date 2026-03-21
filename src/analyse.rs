@@ -20,7 +20,6 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tower_lsp::lsp_types::*;
@@ -148,18 +147,21 @@ pub async fn run(options: AnalyseOptions) -> i32 {
 
                         let uri = crate::util::path_to_uri(file_path);
 
-                        backend
-                            .open_files
-                            .write()
-                            .insert(uri.clone(), Arc::new(content.clone()));
+                        // Only update_ast is needed to populate the per-file
+                        // maps (ast_map, symbol_maps, use_map, namespace_map)
+                        // that the diagnostic collectors read from.
+                        //
+                        // We intentionally skip open_files insert/remove
+                        // (diagnostic collectors receive `content` directly)
+                        // and clear_file_maps (we *want* state to accumulate
+                        // so later files can resolve classes from earlier
+                        // files, and it contained an O(N) class_index retain
+                        // that serialised all threads).
                         backend.update_ast(&uri, &content);
 
                         let mut raw = Vec::new();
                         backend.collect_fast_diagnostics(&uri, &content, &mut raw);
                         backend.collect_slow_diagnostics(&uri, &content, &mut raw);
-
-                        backend.open_files.write().remove(&uri);
-                        backend.clear_file_maps(&uri);
 
                         let filtered: Vec<FileDiagnostic> = raw
                             .into_iter()
