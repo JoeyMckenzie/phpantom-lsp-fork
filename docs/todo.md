@@ -103,7 +103,6 @@ unlikely to move the needle for most users.
 |     | **[Bugs](todo/bugs.md)**                                                                                                                                     |             |             |
 | B3  | [Trait static/self suppression not applied inside closures](todo/bugs.md#b3-trait-staticself-suppression-not-applied-inside-closures)                         | Medium      | Low         |
 | B4  | [Variable reassignment loses type when parameter name is reused](todo/bugs.md#b4-variable-reassignment-loses-type-when-parameter-name-is-reused)             | Medium      | Medium      |
-| B6  | [Empty subject string in diagnostic messages](todo/bugs.md#b6-empty-subject-string-in-diagnostic-messages)                                                   | Low         | Low         |
 | B7  | [Overloaded built-in function signatures in stubs](todo/bugs.md#b7-overloaded-built-in-function-signatures-in-stubs)                                         | Low         | Low         |
 | B8  | [`getCode`/`getMessage` not found through deep inheritance chains](todo/bugs.md#b8-getcodemessage-not-found-through-deep-inheritance-chains)                 | Low         | Low         |
 |     | **[Completion](todo/completion.md)**                                                                                                                         |             |             |

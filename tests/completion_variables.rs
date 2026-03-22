@@ -16889,6 +16889,138 @@ async fn test_completion_nullsafe_method_chain_cross_file() {
     }
 }
 
+// ─── Ternary / null-coalesce RHS resolution (B6) ────────────────────────────
+
+/// Short ternary as RHS: `$p = $cond ?: new Printer()` should resolve `$p`.
+#[tokio::test]
+async fn test_completion_short_ternary_rhs_instantiation() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///short_ternary.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Printer {\n",
+        "    public function print(): void {}\n",
+        "}\n",
+        "class Demo {\n",
+        "    public function run(): void {\n",
+        "        $p = null ?: new Printer();\n",
+        "        $p->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 7,
+                character: 12,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Completion should return results for short ternary RHS"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+            assert!(
+                names.contains(&"print"),
+                "Should include 'print' from Printer via ternary, got: {:?}",
+                names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// Full ternary as RHS with instantiation on both branches.
+#[tokio::test]
+async fn test_completion_full_ternary_rhs_instantiation() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///full_ternary.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Renderer {\n",
+        "    public function render(): string { return ''; }\n",
+        "}\n",
+        "class Page {\n",
+        "    public function show(bool $flag): void {\n",
+        "        $r = $flag ? new Renderer() : new Renderer();\n",
+        "        $r->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 7,
+                character: 12,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Completion should return results for full ternary RHS"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+            assert!(
+                names.contains(&"render"),
+                "Should include 'render' from Renderer via ternary, got: {:?}",
+                names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
 // ─── Nullable type resolution (B1) ──────────────────────────────────────────
 
 /// A parameter typed `?ClassName` should resolve to `ClassName` for completion.

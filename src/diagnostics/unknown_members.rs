@@ -427,7 +427,7 @@ impl Backend {
                         // usually because the symbol map's subject_text
                         // doesn't preserve full argument text, not because
                         // the user is missing a type annotation.
-                        if !subject_text.contains('(') {
+                        if !subject_text.is_empty() && !subject_text.contains('(') {
                             let range = match offset_range_to_lsp_range(
                                 content,
                                 span.start as usize,

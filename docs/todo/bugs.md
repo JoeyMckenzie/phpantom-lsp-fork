@@ -79,29 +79,6 @@ within the same scope at the cursor offset.
 
 ---
 
-#### B6. Empty subject string in type resolution
-
-| | |
-|---|---|
-| **Impact** | Low |
-| **Effort** | Low |
-
-The subject extraction produces an empty string for complex expressions
-like `($a ?: $b)?->property`, meaning the type engine has no subject
-to resolve. This manifests as "Cannot resolve type of ''" in
-diagnostics, but the underlying issue is that `expr_to_subject_text`
-does not handle ternary-inside-nullable and similar compound patterns.
-
-**Observed:** 5 cases in `shared` with empty subject strings.
-
-**Fix:** Extend `expr_to_subject_text` to handle parenthesised ternary
-expressions, short ternary (`?:`), and null-coalesce (`??`) as subject
-bases. When the expression is too complex to represent as a subject
-string, the type engine should skip the access rather than attempt
-resolution with an empty key.
-
----
-
 #### B7. Overloaded built-in function signatures not representable in stubs
 
 | | |

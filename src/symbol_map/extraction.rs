@@ -2377,6 +2377,30 @@ fn expr_to_subject_text(expr: &Expression<'_>) -> String {
             format!("[{}]", parts.join(", "))
         }
 
+        // Ternary `$a ? $b : $c` and short ternary `$a ?: $b`.
+        // For short ternary (`then` is None), the condition is the
+        // preferred branch; for full ternary, use the `then` branch.
+        // Either way we pick one branch so the type engine has
+        // something to resolve rather than an empty string.
+        Expression::Conditional(cond) => {
+            let preferred = cond.then.unwrap_or(cond.condition);
+            let text = expr_to_subject_text(preferred);
+            if !text.is_empty() {
+                return text;
+            }
+            // Fall back to the else branch.
+            expr_to_subject_text(cond.r#else)
+        }
+
+        // Null coalesce `$a ?? $b` — LHS is the preferred non-null value.
+        Expression::Binary(binary) if binary.operator.is_null_coalesce() => {
+            let text = expr_to_subject_text(binary.lhs);
+            if !text.is_empty() {
+                return text;
+            }
+            expr_to_subject_text(binary.rhs)
+        }
+
         Expression::ArrayAccess(access) => {
             let base = expr_to_subject_text(access.array);
             if base.is_empty() {

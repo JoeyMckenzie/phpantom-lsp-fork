@@ -7986,3 +7986,92 @@ class Demo {
         text
     );
 }
+
+// ─── Ternary / null-coalesce subject extraction (B6) ────────────────────────
+
+#[test]
+fn hover_short_ternary_member_access() {
+    let backend = create_test_backend();
+    let uri = "file:///b6_short_ternary.php";
+    let content = r#"<?php
+class Gadget {
+    public string $label = '';
+}
+class B6Demo {
+    public function run(?Gadget $a, Gadget $b): void {
+        ($a ?: $b)->label;
+    }
+}
+"#;
+
+    // Hover on `label` in `($a ?: $b)->label` (line 6, character 21)
+    let hover = hover_at(&backend, uri, content, 6, 21);
+    assert!(
+        hover.is_some(),
+        "hover should resolve the member through short ternary subject"
+    );
+    let text = hover_text(hover.as_ref().unwrap());
+    assert!(
+        text.contains("label"),
+        "hover should mention 'label', got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_null_coalesce_member_access() {
+    let backend = create_test_backend();
+    let uri = "file:///b6_null_coalesce.php";
+    let content = r#"<?php
+class Sensor {
+    public int $value = 0;
+}
+class B6Demo2 {
+    public function run(?Sensor $a, Sensor $b): void {
+        ($a ?? $b)->value;
+    }
+}
+"#;
+
+    // Hover on `value` in `($a ?? $b)->value` (line 6, character 21)
+    let hover = hover_at(&backend, uri, content, 6, 21);
+    assert!(
+        hover.is_some(),
+        "hover should resolve the member through null-coalesce subject"
+    );
+    let text = hover_text(hover.as_ref().unwrap());
+    assert!(
+        text.contains("value"),
+        "hover should mention 'value', got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_full_ternary_member_access() {
+    let backend = create_test_backend();
+    let uri = "file:///b6_full_ternary.php";
+    let content = r#"<?php
+class Engine {
+    public function start(): void {}
+}
+class B6Demo3 {
+    public function run(bool $flag, Engine $a, Engine $b): void {
+        ($flag ? $a : $b)->start();
+    }
+}
+"#;
+
+    // Hover on `start` in `($flag ? $a : $b)->start()` (line 6, character 28)
+    let hover = hover_at(&backend, uri, content, 6, 28);
+    assert!(
+        hover.is_some(),
+        "hover should resolve the member through full ternary subject"
+    );
+    let text = hover_text(hover.as_ref().unwrap());
+    assert!(
+        text.contains("start"),
+        "hover should mention 'start', got: {}",
+        text
+    );
+}
