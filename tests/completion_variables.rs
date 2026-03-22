@@ -11214,6 +11214,77 @@ async fn test_completion_clone_cross_file() {
     }
 }
 
+/// `(clone $date)->` should resolve to the same type as `$date` without
+/// needing an intermediate variable assignment.
+#[tokio::test]
+async fn test_completion_clone_inline_parenthesized() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///clone_inline.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class DateRange {\n",
+        "    public function endOfMonth(): self { return $this; }\n",
+        "    public function format(string $f): string { return ''; }\n",
+        "}\n",
+        "class InlineCloneDemo {\n",
+        "    public function demo(DateRange $date): void {\n",
+        "        $lastDay = (clone $date)->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 7,
+                character: 37,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Completion should return results for inline (clone $date)->"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+            assert!(
+                method_names.contains(&"endOfMonth"),
+                "Should include 'endOfMonth' from DateRange via inline clone, got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"format"),
+                "Should include 'format' from DateRange via inline clone, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
 // ─── Foreach over method calls / property access / static calls ─────────────
 
 /// `foreach ($this->getUsers() as $user)` should resolve `$user` to `User`.

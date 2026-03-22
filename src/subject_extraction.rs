@@ -29,6 +29,7 @@
 //! | `ClassName::make()->`        | `->`     | `ClassName::make()`     |
 //! | `new Foo()->`                | `->`     | `Foo`                   |
 //! | `(new Foo())->`              | `->`     | `Foo`                   |
+//! | `(clone $var)->`             | `->`     | `$var`                  |
 //! | `Status::Active->`           | `->`     | `Status::Active`        |
 //! | `self::`                     | `::`     | `self`                  |
 //! | `ClassName::`                | `::`     | `ClassName`             |
@@ -123,6 +124,64 @@ fn check_new_keyword_before(
     None
 }
 
+/// Try to extract a subject from a parenthesized `clone` expression:
+/// `(clone $expr)`.
+///
+/// `clone` preserves the type of the operand, so the subject is just
+/// the inner expression after stripping the `clone` keyword.
+///
+/// `open` is the position of the outer `(`, `close` is one past the
+/// outer `)`.
+fn extract_clone_expression_inside_parens(
+    chars: &[char],
+    open: usize,
+    close: usize,
+) -> Option<String> {
+    let inner_start = open + 1;
+    let inner_end = close - 1;
+    if inner_start >= inner_end {
+        return None;
+    }
+
+    // Skip whitespace inside the opening `(`.
+    let mut k = inner_start;
+    while k < inner_end && chars[k] == ' ' {
+        k += 1;
+    }
+
+    // Check for `clone` keyword (5 chars).
+    if k + 5 > inner_end {
+        return None;
+    }
+    if chars[k] != 'c'
+        || chars[k + 1] != 'l'
+        || chars[k + 2] != 'o'
+        || chars[k + 3] != 'n'
+        || chars[k + 4] != 'e'
+    {
+        return None;
+    }
+    k += 5;
+
+    // Must be followed by whitespace.
+    if k >= inner_end || chars[k] != ' ' {
+        return None;
+    }
+    while k < inner_end && chars[k] == ' ' {
+        k += 1;
+    }
+
+    // The rest is the expression being cloned.  Since `clone` preserves
+    // the type, return the inner expression as-is so the resolver sees
+    // e.g. `$date` instead of `(clone $date)`.
+    let rest: String = chars[k..inner_end].iter().collect();
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
 /// Try to extract a class name from a parenthesized `new` expression:
 /// `(new ClassName(...))`.
 ///
@@ -194,6 +253,7 @@ fn extract_new_expression_inside_parens(
 ///   - `ClassName::make()->` (static method call)
 ///   - `new ClassName()->` (instantiation, PHP 8.4+)
 ///   - `(new ClassName())->` (parenthesized instantiation)
+///   - `(clone $var)->` (clone preserves type of operand)
 ///   - `Status::Active->` (enum case access)
 ///   - `tryFrom($int)?->` (nullsafe after call)
 fn extract_arrow_subject(chars: &[char], arrow_pos: usize) -> String {
@@ -388,6 +448,12 @@ fn extract_call_subject(chars: &[char], paren_end: usize) -> Option<String> {
         // balanced parens form a `(new ClassName(...))` expression.
         if let Some(new_expr) = extract_new_expression_inside_parens(chars, open, paren_end) {
             return Some(new_expr);
+        }
+
+        // `(clone $expr)` — clone preserves the type of the operand,
+        // so extract the inner expression as the subject.
+        if let Some(clone_inner) = extract_clone_expression_inside_parens(chars, open, paren_end) {
+            return Some(clone_inner);
         }
 
         // ── Parenthesized expression invocation: `(expr)()` ─────

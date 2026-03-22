@@ -429,6 +429,55 @@ fn test_function_call_base_array_access() {
 }
 
 #[test]
+fn test_clone_simple_variable() {
+    // (clone $date)->
+    let input = "(clone $date)->";
+    let chars: Vec<char> = input.chars().collect();
+    let arrow_pos = input.rfind("->").unwrap();
+    let result = extract_arrow_subject(&chars, arrow_pos);
+    assert_eq!(result, "$date", "clone should preserve the inner variable");
+}
+
+#[test]
+fn test_clone_property_chain() {
+    // (clone $this->date)->
+    let input = "(clone $this->date)->";
+    let chars: Vec<char> = input.chars().collect();
+    let arrow_pos = input.rfind("->").unwrap();
+    let result = extract_arrow_subject(&chars, arrow_pos);
+    assert_eq!(
+        result, "$this->date",
+        "clone should preserve the inner property chain"
+    );
+}
+
+#[test]
+fn test_clone_method_chain() {
+    // (clone $date)->endOfMonth()->
+    let input = "(clone $date)->endOfMonth()->";
+    let chars: Vec<char> = input.chars().collect();
+    let arrow_pos = input.rfind("->").unwrap();
+    let result = extract_arrow_subject(&chars, arrow_pos);
+    assert!(
+        result.contains("$date") && result.contains("endOfMonth"),
+        "Expected chain through clone, got: {result}"
+    );
+}
+
+#[test]
+fn test_clone_with_extra_whitespace() {
+    // (clone   $date)->
+    let input = "(clone   $date)->";
+    let chars: Vec<char> = input.chars().collect();
+    let arrow_pos = input.rfind("->").unwrap();
+    let result = extract_arrow_subject(&chars, arrow_pos);
+    assert_eq!(
+        result, "$date",
+        "clone with extra whitespace should still resolve"
+    );
+}
+
+#[test]
 fn test_inline_new_expression_method_chain() {
     // (new Foo)->bar()->
     let input = "(new Foo)->bar()->";

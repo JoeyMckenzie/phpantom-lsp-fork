@@ -2329,6 +2329,9 @@ fn expr_to_subject_text(expr: &Expression<'_>) -> String {
 
         Expression::Parenthesized(paren) => expr_to_subject_text(paren.expression),
 
+        // `clone $expr` preserves the type of the operand.
+        Expression::Clone(clone) => expr_to_subject_text(clone.object),
+
         // Array literals: `[Foo::class, 'bar']` → `[Foo::class, 'bar']`.
         // We format elements we can represent and elide the rest so that
         // callers (especially conditional return-type resolution) can see

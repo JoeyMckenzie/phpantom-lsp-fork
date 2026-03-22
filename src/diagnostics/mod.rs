@@ -569,8 +569,7 @@ impl Backend {
             // collect_unknown_member_diagnostics and
             // collect_argument_count_diagnostics share resolved
             // subjects instead of re-resolving them independently.
-            let _subj_guard =
-                crate::completion::resolver::with_diagnostic_subject_cache();
+            let _subj_guard = crate::completion::resolver::with_diagnostic_subject_cache();
             self.collect_slow_diagnostics(uri_str, content, &mut slow_diagnostics);
         }
 
