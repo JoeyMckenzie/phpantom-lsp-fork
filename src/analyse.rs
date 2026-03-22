@@ -288,7 +288,7 @@ pub async fn run(options: AnalyseOptions) -> i32 {
                             );
                         }
 
-                        let filtered: Vec<FileDiagnostic> = raw
+                        let mut filtered: Vec<FileDiagnostic> = raw
                             .into_iter()
                             .filter_map(|d| {
                                 let sev = d.severity.unwrap_or(DiagnosticSeverity::WARNING);
@@ -308,6 +308,7 @@ pub async fn run(options: AnalyseOptions) -> i32 {
                             .collect();
 
                         if !filtered.is_empty() {
+                            filtered.sort_by_key(|d| d.line);
                             let display_path = files[i]
                                 .strip_prefix(root)
                                 .unwrap_or(&files[i])
