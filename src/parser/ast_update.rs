@@ -696,6 +696,12 @@ impl Backend {
                 namespace,
                 tpl_params,
             );
+            Self::resolve_generics_type_args(
+                &mut class.mixin_generics,
+                use_map,
+                namespace,
+                tpl_params,
+            );
 
             // Resolve class-like names in method return types and property
             // type hints so that cross-file resolution works correctly.

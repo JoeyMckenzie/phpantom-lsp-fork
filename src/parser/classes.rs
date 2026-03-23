@@ -78,6 +78,11 @@ struct ClassDocblockInfo {
     type_aliases: HashMap<String, String>,
     /// Mixin class names from `@mixin` tags.
     mixins: Vec<String>,
+    /// Generic type arguments from `@mixin` tags.
+    ///
+    /// Each entry is `(MixinClassName, [TypeArg1, TypeArg2, …])`.
+    /// Only populated for mixins that have generic arguments.
+    mixin_generics: Vec<(String, Vec<String>)>,
     /// URLs from `@link` and `@see` tags in the class-level docblock.
     links: Vec<String>,
     /// `@see` references from the class-level docblock.
@@ -110,6 +115,13 @@ fn extract_class_docblock<'a>(
         .filter_map(|(name, bound)| bound.map(|b| (name, b)))
         .collect();
 
+    let mixin_data = docblock::extract_mixin_tags(doc_text);
+    let mixins: Vec<String> = mixin_data.iter().map(|(name, _)| name.clone()).collect();
+    let mixin_generics: Vec<(String, Vec<String>)> = mixin_data
+        .into_iter()
+        .filter(|(_, args)| !args.is_empty())
+        .collect();
+
     ClassDocblockInfo {
         deprecation_message: docblock::extract_deprecation_message(doc_text),
         template_params,
@@ -118,7 +130,8 @@ fn extract_class_docblock<'a>(
         implements_generics: docblock::extract_generics_tag(doc_text, "@implements"),
         use_generics: docblock::extract_generics_tag(doc_text, "@use"),
         type_aliases: docblock::extract_type_aliases(doc_text),
-        mixins: docblock::extract_mixin_tags(doc_text),
+        mixins,
+        mixin_generics,
         links: docblock::extract_link_urls(doc_text),
         see_refs: docblock::extract_see_references(doc_text),
         raw_docblock: Some(doc_text.to_string()),
@@ -712,6 +725,7 @@ impl Backend {
                         interfaces,
                         used_traits,
                         mixins: doc_info.mixins,
+                        mixin_generics: doc_info.mixin_generics,
                         is_final: class.modifiers.contains_final(),
                         is_abstract: class.modifiers.contains_abstract(),
                         deprecation_message: class_depr.message,
@@ -799,6 +813,7 @@ impl Backend {
                         interfaces: all_parents,
                         used_traits,
                         mixins: doc_info.mixins,
+                        mixin_generics: doc_info.mixin_generics,
                         is_final: false,
                         is_abstract: false,
                         deprecation_message: iface_depr.message,
@@ -867,6 +882,7 @@ impl Backend {
                         interfaces: vec![],
                         used_traits,
                         mixins: doc_info.mixins,
+                        mixin_generics: doc_info.mixin_generics,
                         is_final: false,
                         is_abstract: false,
                         deprecation_message: trait_depr.message,
@@ -960,6 +976,7 @@ impl Backend {
                         interfaces,
                         used_traits,
                         mixins: doc_info.mixins,
+                        mixin_generics: doc_info.mixin_generics,
                         is_final: true,
                         is_abstract: false,
                         deprecation_message: enum_depr.message,
@@ -1061,6 +1078,7 @@ impl Backend {
             interfaces,
             used_traits,
             mixins: vec![],
+            mixin_generics: vec![],
             is_final: false,
             is_abstract: false,
             deprecation_message: None,

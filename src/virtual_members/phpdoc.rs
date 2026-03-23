@@ -21,10 +21,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::docblock;
+use crate::inheritance;
+use crate::inheritance::ClassRef;
 use crate::types::{
     ClassInfo, ConstantInfo, MAX_INHERITANCE_DEPTH, MAX_MIXIN_DEPTH, MethodInfo, PropertyInfo,
     Visibility,
 };
+use crate::util::short_name;
 
 thread_local! {
     /// Thread-local cache of base-resolved mixin classes.
@@ -55,6 +58,16 @@ pub fn clear_mixin_cache() {
 
 /// Tracks member names already seen during mixin collection.
 ///
+/// Accumulates mixin members during collection, grouping the output
+/// vectors and dedup sets into a single value to keep the argument
+/// count of [`collect_mixin_members`] within clippy's limit.
+struct MixinCollector {
+    methods: Vec<MethodInfo>,
+    properties: Vec<PropertyInfo>,
+    constants: Vec<ConstantInfo>,
+    dedup: MixinDedup,
+}
+
 /// Passed through [`collect_mixin_members`] (including recursive calls)
 /// so that every addition is checked in O(1) instead of scanning the
 /// accumulated vectors and base class members.
@@ -168,7 +181,7 @@ impl VirtualMemberProvider for PHPDocProvider {
     ) -> VirtualMembers {
         let mut methods = Vec::new();
         let mut properties = Vec::new();
-        let mut constants = Vec::new();
+        let constants = Vec::new();
 
         // Dedup sets for O(1) membership checks.  Seeded from the
         // base-resolved class members (real + inherited) and updated
@@ -327,28 +340,43 @@ impl VirtualMemberProvider for PHPDocProvider {
 
         // ── Phase 2: @mixin members (lower precedence) ─────────────────
 
-        let mut mixin_dedup = MixinDedup {
+        let mixin_dedup = MixinDedup {
             methods: seen_methods,
             properties: seen_props,
             constants: seen_consts,
         };
 
+        let mut collector = MixinCollector {
+            methods,
+            properties,
+            constants,
+            dedup: mixin_dedup,
+        };
+
         // Collect from the class's own mixins.
         collect_mixin_members(
             &class.mixins,
+            &class.mixin_generics,
             class_loader,
-            &mut methods,
-            &mut properties,
-            &mut constants,
+            &mut collector,
             0,
-            &mut mixin_dedup,
         );
 
         // Collect from ancestor mixins.
-        // Use a cheap Arc handle instead of cloning ClassInfo at each level.
-        let mut current_parent = class.parent_class.clone();
+        //
+        // As we walk the parent chain we accumulate a substitution map
+        // (template-param → concrete-type) so that mixin generic
+        // arguments that reference a parent's template params are
+        // resolved to concrete types.  For example, when
+        // `BelongsTo extends Relation<Product>` and `Relation` has
+        // `@mixin Builder<TRelatedModel>`, the walk builds
+        // `{TRelatedModel → Product}` from the child's `@extends`
+        // generics and applies it to the mixin's generic args, turning
+        // `Builder<TRelatedModel>` into `Builder<Product>`.
+        let mut current_ancestor: ClassRef<'_> = ClassRef::Borrowed(class);
+        let mut active_subs: HashMap<String, String> = HashMap::new();
         let mut depth = 0u32;
-        while let Some(ref parent_name) = current_parent {
+        while let Some(ref parent_name) = current_ancestor.parent_class.clone() {
             depth += 1;
             if depth > MAX_INHERITANCE_DEPTH {
                 break;
@@ -358,24 +386,50 @@ impl VirtualMemberProvider for PHPDocProvider {
             } else {
                 break;
             };
+
+            // Build the substitution map for this parent level,
+            // analogous to `build_substitution_map` in inheritance.rs.
+            let level_subs = build_mixin_substitution_map(&current_ancestor, &parent, &active_subs);
+
             if !parent.mixins.is_empty() {
+                // Apply the accumulated substitution map to the
+                // parent's mixin generic arguments so that template
+                // param names are replaced with concrete types.
+                let resolved_mixin_generics: Vec<(String, Vec<String>)> = if level_subs.is_empty() {
+                    parent.mixin_generics.clone()
+                } else {
+                    parent
+                        .mixin_generics
+                        .iter()
+                        .map(|(name, args)| {
+                            let resolved_args: Vec<String> = args
+                                .iter()
+                                .map(|arg| {
+                                    let sub = inheritance::apply_substitution(arg, &level_subs);
+                                    sub.into_owned()
+                                })
+                                .collect();
+                            (name.clone(), resolved_args)
+                        })
+                        .collect()
+                };
+
                 collect_mixin_members(
                     &parent.mixins,
+                    &resolved_mixin_generics,
                     class_loader,
-                    &mut methods,
-                    &mut properties,
-                    &mut constants,
+                    &mut collector,
                     0,
-                    &mut mixin_dedup,
                 );
             }
-            current_parent = parent.parent_class.clone();
+            active_subs = level_subs;
+            current_ancestor = ClassRef::Owned(parent);
         }
 
         VirtualMembers {
-            methods,
-            properties,
-            constants,
+            methods: collector.methods,
+            properties: collector.properties,
+            constants: collector.constants,
         }
     }
 }
@@ -401,12 +455,10 @@ impl VirtualMemberProvider for PHPDocProvider {
 /// with dozens of traits).
 fn collect_mixin_members(
     mixin_names: &[String],
+    mixin_generics: &[(String, Vec<String>)],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
-    methods: &mut Vec<MethodInfo>,
-    properties: &mut Vec<PropertyInfo>,
-    constants: &mut Vec<ConstantInfo>,
+    collector: &mut MixinCollector,
     depth: u32,
-    dedup: &mut MixinDedup,
 ) {
     if depth > MAX_MIXIN_DEPTH {
         return;
@@ -418,6 +470,13 @@ fn collect_mixin_members(
         } else {
             continue;
         };
+
+        // Find generic args for this mixin from the @mixin tag.
+        let mixin_short = short_name(mixin_name);
+        let generic_args: Option<&[String]> = mixin_generics
+            .iter()
+            .find(|(name, _)| name == mixin_name || short_name(name) == mixin_short)
+            .map(|(_, args)| args.as_slice());
 
         // Resolve the mixin class with its own inheritance so we see
         // all of its inherited/trait members too.  Use base resolution
@@ -435,6 +494,20 @@ fn collect_mixin_members(
             }))
         });
 
+        // Build a substitution map from the mixin class's template params
+        // to the concrete types provided in the @mixin tag's generic args.
+        let subs: HashMap<String, String> = if let Some(args) = generic_args {
+            let mut map = HashMap::new();
+            for (i, param_name) in mixin_class.template_params.iter().enumerate() {
+                if let Some(arg) = args.get(i) {
+                    map.insert(param_name.clone(), arg.clone());
+                }
+            }
+            map
+        } else {
+            HashMap::new()
+        };
+
         // Only merge public members — mixins proxy via magic methods
         // which only expose public API.
         for method in &resolved_mixin.methods {
@@ -443,10 +516,13 @@ fn collect_mixin_members(
             }
             // Skip if the base-resolved class already has this method,
             // or if a previous @method tag or mixin already contributed it.
-            if !dedup.methods.insert(method.name.clone()) {
+            if !collector.dedup.methods.insert(method.name.clone()) {
                 continue;
             }
-            let method = method.clone();
+            let mut method = method.clone();
+            if !subs.is_empty() {
+                inheritance::apply_substitution_to_method(&mut method, &subs);
+            }
             // `@return $this` / `self` / `static` in mixin methods are
             // left as-is.  When the method is later called on the
             // consuming class, `$this` resolves to the consumer (not the
@@ -456,42 +532,93 @@ fn collect_mixin_members(
             // the substitution map rewrites `$this` to
             // `\Illuminate\Database\Eloquent\Builder<Model>`, so the
             // return type must still be the raw keyword at this stage.
-            methods.push(method);
+            collector.methods.push(method);
         }
 
         for property in &resolved_mixin.properties {
             if property.visibility != Visibility::Public {
                 continue;
             }
-            if !dedup.properties.insert(property.name.clone()) {
+            if !collector.dedup.properties.insert(property.name.clone()) {
                 continue;
             }
-            properties.push(property.clone());
+            let mut property = property.clone();
+            if !subs.is_empty() {
+                inheritance::apply_substitution_to_property(&mut property, &subs);
+            }
+            collector.properties.push(property);
         }
 
         for constant in &resolved_mixin.constants {
             if constant.visibility != Visibility::Public {
                 continue;
             }
-            if !dedup.constants.insert(constant.name.clone()) {
+            if !collector.dedup.constants.insert(constant.name.clone()) {
                 continue;
             }
-            constants.push(constant.clone());
+            collector.constants.push(constant.clone());
         }
 
         // Recurse into mixins declared by the mixin class itself.
         if !mixin_class.mixins.is_empty() {
             collect_mixin_members(
                 &mixin_class.mixins,
+                &mixin_class.mixin_generics,
                 class_loader,
-                methods,
-                properties,
-                constants,
+                collector,
                 depth + 1,
-                dedup,
             );
         }
     }
+}
+
+/// Build a substitution map for mixin generic resolution by zipping the
+/// parent class's `@template` parameters with the type arguments provided
+/// by the child's `@extends` / `@implements` generics.
+///
+/// This mirrors [`crate::inheritance::build_substitution_map`] but is
+/// scoped to the virtual-member provider so it does not need to be public
+/// on the inheritance module.
+fn build_mixin_substitution_map(
+    current: &ClassInfo,
+    parent: &ClassInfo,
+    active_subs: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    if parent.template_params.is_empty() {
+        return active_subs.clone();
+    }
+
+    let parent_short = short_name(&parent.name);
+
+    // Find `@extends`/`@implements` generics matching this parent.
+    let type_args = current
+        .extends_generics
+        .iter()
+        .chain(current.implements_generics.iter())
+        .find(|(name, _)| {
+            let name_short = short_name(name);
+            name_short == parent_short
+        })
+        .map(|(_, args)| args);
+
+    let type_args = match type_args {
+        Some(args) => args,
+        None => return active_subs.clone(),
+    };
+
+    let mut map = HashMap::new();
+    for (i, param_name) in parent.template_params.iter().enumerate() {
+        if let Some(arg) = type_args.get(i) {
+            let resolved = if active_subs.is_empty() {
+                arg.clone()
+            } else {
+                inheritance::apply_substitution(arg, active_subs).into_owned()
+            };
+            map.insert(param_name.clone(), resolved);
+        }
+    }
+
+    map
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

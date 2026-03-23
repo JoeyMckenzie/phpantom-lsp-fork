@@ -10,8 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Null-coalesce (`??`) type refinement.** When the left-hand side of `??` is provably non-nullable (e.g. `new Foo()`, `clone $x`, a literal), the right-hand side is recognized as dead code and the result resolves to the LHS type only. When the LHS is nullable (e.g. a `?Foo` return type), `null` is stripped from the LHS and the result is the union of the non-null LHS with the RHS.
+- **`@mixin` generic substitution.** When a class declares `@mixin Builder<TRelatedModel>`, the generic arguments are now preserved and substituted into the mixin's members. Previously, `@mixin Builder<TRelatedModel>` was stored as just `Builder` (the generic argument was stripped), so methods like `firstOrFail(): TModel` returned the raw template parameter name instead of the concrete type. This resolves through inheritance chains: `BelongsTo @extends Relation<Product>` with `Relation @mixin Builder<TRelatedModel>` now correctly substitutes `TModel` to `Product` on all Builder methods.
 
 ### Fixed
+
+- **Hover and completion type parity.** The hover type-string engine now handles pipe expressions (`|>`), closure/arrow-function literals, and generator yield-assignment (`$var = yield`) expressions, matching the completion engine. Previously these expression kinds were only handled by the completion pipeline, so hover could show a different (or missing) type for variables assigned from them.
 
 - **Guard clause narrowing across instanceof branches.** After `if ($x instanceof Y) { return; }`, subsequent `instanceof` checks on the same variable no longer incorrectly resolve to `Y`. Previously the diagnostic cache reused the narrowed type from inside the first branch for all later accesses to the same variable, producing false-positive "not found" warnings (e.g. "Property 'value' not found on class 'Stringable'" inside a `BackedEnum` branch).
 - **`instanceof self/static/parent` narrowing.** Type narrowing with `instanceof self`, `instanceof static`, and `instanceof parent` now works correctly in all contexts (assert, if-blocks, guard clauses, compound conditions). Previously these keywords were ignored because the AST parser produces dedicated node types rather than identifiers, and `parent` was not recognized as a type hint during resolution.

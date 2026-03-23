@@ -1135,14 +1135,17 @@ fn conditional_no_return_tag() {
 fn mixin_tag_simple() {
     let doc = concat!("/**\n", " * @mixin ShoppingCart\n", " */",);
     let mixins = extract_mixin_tags(doc);
-    assert_eq!(mixins, vec!["ShoppingCart"]);
+    assert_eq!(mixins, vec![("ShoppingCart".to_string(), vec![])]);
 }
 
 #[test]
 fn mixin_tag_fqn() {
     let doc = concat!("/**\n", " * @mixin \\App\\Models\\ShoppingCart\n", " */",);
     let mixins = extract_mixin_tags(doc);
-    assert_eq!(mixins, vec!["\\App\\Models\\ShoppingCart"]);
+    assert_eq!(
+        mixins,
+        vec![("\\App\\Models\\ShoppingCart".to_string(), vec![])]
+    );
 }
 
 #[test]
@@ -1154,7 +1157,13 @@ fn mixin_tag_multiple() {
         " */",
     );
     let mixins = extract_mixin_tags(doc);
-    assert_eq!(mixins, vec!["ShoppingCart", "Wishlist"]);
+    assert_eq!(
+        mixins,
+        vec![
+            ("ShoppingCart".to_string(), vec![]),
+            ("Wishlist".to_string(), vec![]),
+        ]
+    );
 }
 
 #[test]
@@ -1172,14 +1181,20 @@ fn mixin_tag_with_description() {
         " */",
     );
     let mixins = extract_mixin_tags(doc);
-    assert_eq!(mixins, vec!["ShoppingCart"]);
+    assert_eq!(mixins, vec![("ShoppingCart".to_string(), vec![])]);
 }
 
 #[test]
-fn mixin_tag_generic_stripped() {
+fn mixin_tag_generic_preserved() {
     let doc = concat!("/**\n", " * @mixin Collection<int, Model>\n", " */",);
     let mixins = extract_mixin_tags(doc);
-    assert_eq!(mixins, vec!["Collection"]);
+    assert_eq!(
+        mixins,
+        vec![(
+            "Collection".to_string(),
+            vec!["int".to_string(), "Model".to_string()],
+        )]
+    );
 }
 
 #[test]
@@ -1192,7 +1207,7 @@ fn mixin_tag_mixed_with_other_tags() {
         " */",
     );
     let mixins = extract_mixin_tags(doc);
-    assert_eq!(mixins, vec!["ShoppingCart"]);
+    assert_eq!(mixins, vec![("ShoppingCart".to_string(), vec![])]);
 }
 
 #[test]

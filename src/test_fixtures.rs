@@ -42,6 +42,7 @@ pub fn make_class(name: &str) -> ClassInfo {
         interfaces: Vec::new(),
         used_traits: Vec::new(),
         mixins: Vec::new(),
+        mixin_generics: Vec::new(),
         is_final: false,
         is_abstract: false,
         deprecation_message: None,

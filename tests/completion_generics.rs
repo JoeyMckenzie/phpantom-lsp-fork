@@ -6462,3 +6462,275 @@ async fn test_shape_string_key_from_var_annotation() {
         _ => panic!("Expected CompletionResponse::Array"),
     }
 }
+
+// ─── Chain-level generic substitution tests ─────────────────────────────────
+//
+// These tests verify that when a method returns a parameterised generic type
+// like `Collection<int, Product>`, calling a method on that result correctly
+// substitutes the class-level template parameters into the called method's
+// return type.  For example, `Collection<int, Product>::first()` should
+// resolve `TValue` → `Product` so that `->first()->` shows `Product` members.
+
+/// When a method returns `Collection<int, Product>`, calling `first()` on the
+/// result should resolve `TValue` to `Product` and offer `Product` members.
+#[tokio::test]
+async fn test_chain_level_generic_substitution_first() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///chain_generic.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Product {\n",
+        "    public function getPrice(): float {}\n",
+        "    public function getSku(): string {}\n",
+        "}\n",
+        "\n",
+        "/**\n",
+        " * @template TKey\n",
+        " * @template TValue\n",
+        " */\n",
+        "class Collection {\n",
+        "    /** @return TValue */\n",
+        "    public function first() {}\n",
+        "    /** @return TValue */\n",
+        "    public function last() {}\n",
+        "}\n",
+        "\n",
+        "class ProductService {\n",
+        "    /** @return Collection<int, Product> */\n",
+        "    public function getProducts(): Collection {}\n",
+        "\n",
+        "    function test() {\n",
+        "        $this->getProducts()->first()->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 22,
+                character: 42,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getPrice"),
+                "Chain should resolve TValue→Product via Collection<int, Product>::first() and show 'getPrice', got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"getSku"),
+                "Chain should resolve TValue→Product via Collection<int, Product>::first() and show 'getSku', got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// When a variable is assigned from a chain that returns a parameterised
+/// generic, calling a method on the result should substitute template params.
+#[tokio::test]
+async fn test_chain_level_generic_substitution_variable_assignment() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///chain_generic_var.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class User {\n",
+        "    public function getEmail(): string {}\n",
+        "    public function getName(): string {}\n",
+        "}\n",
+        "\n",
+        "/**\n",
+        " * @template TKey\n",
+        " * @template TValue\n",
+        " */\n",
+        "class Collection {\n",
+        "    /** @return TValue */\n",
+        "    public function first() {}\n",
+        "}\n",
+        "\n",
+        "class UserRepo {\n",
+        "    /** @return Collection<int, User> */\n",
+        "    public function findAll(): Collection {}\n",
+        "\n",
+        "    function test() {\n",
+        "        $users = $this->findAll();\n",
+        "        $first = $users->first();\n",
+        "        $first->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 22,
+                character: 16,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getEmail"),
+                "Variable assigned from Collection<int, User>::first() should resolve to User and show 'getEmail', got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"getName"),
+                "Variable assigned from Collection<int, User>::first() should resolve to User and show 'getName', got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// When a mixin carries generic arguments (e.g. `@mixin Builder<TRelatedModel>`),
+/// the template params of the mixin class should be substituted with the
+/// provided generic arguments when merging members.
+#[tokio::test]
+async fn test_mixin_generic_substitution() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///mixin_generic.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Product {\n",
+        "    public function getPrice(): float {}\n",
+        "    public function getSku(): string {}\n",
+        "}\n",
+        "\n",
+        "/**\n",
+        " * @template TModel\n",
+        " */\n",
+        "class Builder {\n",
+        "    /** @return TModel */\n",
+        "    public function firstOrFail() {}\n",
+        "    /** @return TModel */\n",
+        "    public function find() {}\n",
+        "}\n",
+        "\n",
+        "/**\n",
+        " * @template TRelatedModel\n",
+        " * @mixin Builder<TRelatedModel>\n",
+        " */\n",
+        "class Relation {\n",
+        "}\n",
+        "\n",
+        "/**\n",
+        " * @extends Relation<Product>\n",
+        " */\n",
+        "class BelongsTo extends Relation {\n",
+        "}\n",
+        "\n",
+        "class OrderLine {\n",
+        "    public function product(): BelongsTo {}\n",
+        "\n",
+        "    function test() {\n",
+        "        $this->product()->firstOrFail()->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 33,
+                character: 45,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getPrice"),
+                "Mixin generic substitution should resolve TModel→Product via @mixin Builder<TRelatedModel> and show 'getPrice', got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"getSku"),
+                "Mixin generic substitution should resolve TModel→Product via @mixin Builder<TRelatedModel> and show 'getSku', got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}

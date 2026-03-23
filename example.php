@@ -2705,6 +2705,25 @@ class TypeSpecificityDemo
 }
 
 
+// ── Mixin Generic Substitution ──────────────────────────────────────────────
+
+class MixinGenericDemo
+{
+    public function demo(): void
+    {
+        $line = new ScaffoldingOrderLine();
+
+        // @mixin Builder<TRelatedModel> on Relation resolves TModel → Product
+        // through: BelongsTo @extends Relation<Product> → @mixin Builder<TRelatedModel>
+        // → TRelatedModel=Product → Builder<Product> → firstOrFail(): TModel=Product
+        $line->product()->firstOrFail()->getPrice();
+
+        // Same resolution through find()
+        $line->product()->find()->getSku();
+    }
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 // ┃  SCAFFOLDING — Supporting definitions below this line.              ┃
@@ -3871,6 +3890,40 @@ class Product
     use HasFactory;
 
     public function getPrice(): float { return 0.0; }
+    public function getSku(): string { return ''; }
+}
+
+// ─── Mixin Generic Scaffolding ─────────────────────────────────────────────
+
+/**
+ * @template TModel
+ */
+class ScaffoldingMixinBuilder
+{
+    /** @return TModel */
+    public function firstOrFail(): mixed { return null; }
+    /** @return TModel */
+    public function find(): mixed { return null; }
+}
+
+/**
+ * @template TRelatedModel
+ * @mixin ScaffoldingMixinBuilder<TRelatedModel>
+ */
+class ScaffoldingMixinRelation
+{
+}
+
+/**
+ * @extends ScaffoldingMixinRelation<Product>
+ */
+class ScaffoldingMixinBelongsTo extends ScaffoldingMixinRelation
+{
+}
+
+class ScaffoldingOrderLine
+{
+    public function product(): ScaffoldingMixinBelongsTo { return new ScaffoldingMixinBelongsTo(); }
 }
 
 /** @use Indexable<int, Pen> */
@@ -5048,6 +5101,17 @@ function runDemoAssertions(): void
     assert(is_string($ctRouter->getDefaultDriver()), 'Router::getDefaultDriver() must return string');
     $ctExt = $ctRouter->extend('redis', function () {});
     assert($ctExt instanceof ScaffoldingClosureThisRouter, 'Router::extend() must return self');
+
+    // ── @mixin generic substitution scaffolding ─────────────────────────
+    $mixinBuilder = new ScaffoldingMixinBuilder();
+    assert($mixinBuilder->firstOrFail() === null, 'ScaffoldingMixinBuilder::firstOrFail() must return mixed');
+    $mixinRelation = new ScaffoldingMixinRelation();
+    assert($mixinRelation instanceof ScaffoldingMixinRelation, 'ScaffoldingMixinRelation instantiates');
+    $mixinBelongsTo = new ScaffoldingMixinBelongsTo();
+    assert($mixinBelongsTo instanceof ScaffoldingMixinRelation, 'ScaffoldingMixinBelongsTo extends ScaffoldingMixinRelation');
+    $orderLine = new ScaffoldingOrderLine();
+    $productRel = $orderLine->product();
+    assert($productRel instanceof ScaffoldingMixinBelongsTo, 'OrderLine::product() must return ScaffoldingMixinBelongsTo');
 
     echo "All assertions passed.\n";
 }

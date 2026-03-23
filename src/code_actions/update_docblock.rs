@@ -812,12 +812,13 @@ fn normalize_type_for_comparison(t: &str) -> String {
         |rest| format!("{}|null", rest.to_lowercase()),
     );
     // Sort union components.
-    let mut parts: Vec<&str> = split_union_depth0(&t).into_iter().map(|s| s.trim()).collect();
+    let mut parts: Vec<&str> = split_union_depth0(&t)
+        .into_iter()
+        .map(|s| s.trim())
+        .collect();
     parts.sort();
     parts.join("|")
 }
-
-
 
 /// Build the updated docblock text.
 fn build_updated_docblock(

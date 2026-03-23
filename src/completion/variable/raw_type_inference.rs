@@ -915,6 +915,35 @@ fn resolve_rhs_raw_type<'b>(rhs: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
             // Last resort: docblock scan (e.g. `@var` inline annotation).
             super::foreach_resolution::extract_rhs_iterable_raw_type(rhs, ctx)
         }
+        // ── Pipe operator (PHP 8.5): `$expr |> callable(...)` ──
+        // The result type is the return type of the callable.
+        Expression::Pipe(pipe) => {
+            if let Expression::PartialApplication(PartialApplication::Function(fpa)) = pipe.callable
+                && let Expression::Identifier(ident) = fpa.function
+                && let Some(fl) = ctx.function_loader
+                && let Some(func_info) = fl(ident.value())
+                && let Some(ref ret) = func_info.return_type
+            {
+                return Some(ret.clone());
+            }
+            None
+        }
+        // ── Closure / arrow function / first-class callable ─────────
+        // All produce a `Closure` instance at runtime.
+        Expression::PartialApplication(_)
+        | Expression::Closure(_)
+        | Expression::ArrowFunction(_) => Some("\\Closure".to_string()),
+        // ── Generator yield-assignment: `$var = yield $expr` ────────
+        // The value of a yield expression is the TSend type from the
+        // enclosing function's `@return Generator<K, V, TSend, R>`.
+        Expression::Yield(_) => {
+            if let Some(ref ret_type) = ctx.enclosing_return_type
+                && let Some(send_type) = crate::docblock::extract_generator_send_type(ret_type)
+            {
+                return Some(send_type);
+            }
+            None
+        }
         // ── Call / property access — delegate to iterable extractor,
         //    with a source-scan fallback for standalone function calls
         //    when no `function_loader` is available. ──

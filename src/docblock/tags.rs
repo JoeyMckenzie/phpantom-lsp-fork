@@ -167,9 +167,12 @@ pub fn extract_deprecation_with_see(docblock: &str) -> Option<String> {
 ///
 ///   - `@mixin ClassName`
 ///   - `@mixin \Fully\Qualified\ClassName`
+///   - `@mixin ClassName<TypeArg1, TypeArg2>`
 ///
-/// Returns a list of cleaned class name strings (leading `\` stripped).
-pub fn extract_mixin_tags(docblock: &str) -> Vec<String> {
+/// Returns a list of `(base_class_name, generic_args)` tuples.  The base
+/// class name has its leading `\` and generic parameters stripped.  The
+/// `generic_args` vector is empty when the tag has no `<…>` suffix.
+pub fn extract_mixin_tags(docblock: &str) -> Vec<(String, Vec<String>)> {
     let inner = docblock
         .trim()
         .strip_prefix("/**")
@@ -194,15 +197,33 @@ pub fn extract_mixin_tags(docblock: &str) -> Vec<String> {
             continue;
         }
 
-        // The class name is the first whitespace-delimited token.
-        let class_name = match rest.split_whitespace().next() {
-            Some(name) => name,
-            None => continue,
+        // Extract the full type token (respects `<…>` nesting so that
+        // generics like `Builder<TRelatedModel>` are treated as one unit).
+        let (type_token, _remainder) = split_type_token(rest);
+
+        // Split into base class name and optional generic arguments.
+        let (base, generic_args) = if let Some(angle_pos) = type_token.find('<') {
+            let base_name = &type_token[..angle_pos];
+            let inner_generics = &type_token[angle_pos + 1..];
+            let inner_generics = inner_generics
+                .strip_suffix('>')
+                .unwrap_or(inner_generics)
+                .trim();
+            let args: Vec<String> = if inner_generics.is_empty() {
+                vec![]
+            } else {
+                super::types::split_generic_args(inner_generics)
+                    .into_iter()
+                    .map(|a| a.strip_prefix('\\').unwrap_or(a).to_string())
+                    .collect()
+            };
+            (base_class_name(base_name), args)
+        } else {
+            (base_class_name(type_token), vec![])
         };
 
-        let cleaned = base_class_name(class_name);
-        if !cleaned.is_empty() {
-            results.push(cleaned);
+        if !base.is_empty() {
+            results.push((base, generic_args));
         }
     }
 

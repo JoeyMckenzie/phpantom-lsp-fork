@@ -1228,6 +1228,17 @@ pub struct ClassInfo {
     /// classes via magic methods (`__call`, `__get`, `__set`, etc.).
     /// Resolved to fully-qualified names during post-processing.
     pub mixins: Vec<String>,
+    /// Generic type arguments from `@mixin` tags.
+    ///
+    /// Each entry is `(MixinClassName, [TypeArg1, TypeArg2, …])`.
+    /// For example, `@mixin Builder<TRelatedModel>` produces
+    /// `("Builder", ["TRelatedModel"])`.
+    ///
+    /// Used by [`collect_mixin_members`] to build a substitution map
+    /// from the mixin class's `@template` parameters to the provided
+    /// concrete types, analogous to how `extends_generics` works for
+    /// parent class inheritance.
+    pub mixin_generics: Vec<(String, Vec<String>)>,
     /// Whether the class is declared `final`.
     ///
     /// Final classes cannot be extended, so `static::` is equivalent to
@@ -1396,6 +1407,7 @@ impl ClassInfo {
             || self.interfaces != other.interfaces
             || self.used_traits != other.used_traits
             || self.mixins != other.mixins
+            || self.mixin_generics != other.mixin_generics
             || self.is_final != other.is_final
             || self.is_abstract != other.is_abstract
             || self.deprecation_message != other.deprecation_message
