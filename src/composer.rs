@@ -433,6 +433,117 @@ pub fn extract_require_once_paths(content: &str) -> Vec<String> {
     paths
 }
 
+/// Parse `<vendor>/composer/autoload_namespaces.php` (PSR-0 map) and
+/// scan the listed directories for PHP classes.
+///
+/// PSR-0 is a legacy autoloading standard where underscores in class
+/// names map to directory separators.  For example, the prefix
+/// `HTMLPurifier` with base path `library/` means that the class
+/// `HTMLPurifier_Config` lives at `library/HTMLPurifier/Config.php`.
+///
+/// Composer generates `autoload_namespaces.php` for packages that
+/// declare `autoload.psr-0` in their `composer.json`.  The file
+/// contains lines like:
+///
+/// ```text
+///     'HTMLPurifier' => array($vendorDir . '/ezyang/htmlpurifier/library'),
+/// ```
+///
+/// Rather than implementing PSR-0 name-to-path resolution (which would
+/// require handling underscore splitting, prefix directories, and
+/// fallback rules), we simply scan each listed directory with the
+/// byte-level class scanner and return a classmap.  This gives us the
+/// same result as `composer install -o` for PSR-0 packages without
+/// requiring the user to run the optimised dump.
+///
+/// Returns an empty `HashMap` if the file does not exist or has no
+/// entries.
+pub fn parse_autoload_namespaces(
+    workspace_root: &Path,
+    vendor_dir: &str,
+) -> HashMap<String, PathBuf> {
+    let autoload_path = workspace_root
+        .join(vendor_dir)
+        .join("composer")
+        .join("autoload_namespaces.php");
+
+    let content = match fs::read_to_string(&autoload_path) {
+        Ok(c) => c,
+        Err(_) => return HashMap::new(),
+    };
+
+    // Collect all base directories listed in the PSR-0 map.
+    // Each line looks like:
+    //   'Prefix' => array($vendorDir . '/org/pkg/src'),
+    //   'Prefix' => array($vendorDir . '/org/pkg/src', $baseDir . '/lib'),
+    let mut base_dirs: Vec<PathBuf> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Skip lines that don't look like array entries.
+        if !trimmed.contains("=>") {
+            continue;
+        }
+
+        // Extract everything after `=> array(` or `=> [`
+        let rhs = if let Some(pos) = trimmed.find("=> array(") {
+            &trimmed[pos + "=> array(".len()..]
+        } else if let Some(pos) = trimmed.find("=> [") {
+            &trimmed[pos + "=> [".len()..]
+        } else {
+            continue;
+        };
+
+        // Strip trailing `)`, `],`, etc.
+        let rhs =
+            rhs.trim_end_matches(|c: char| c == ')' || c == ']' || c == ',' || c.is_whitespace());
+
+        // Split by comma to handle multiple paths per prefix.
+        for segment in rhs.split(',') {
+            let segment = segment.trim();
+            if let Some(relative_path) = resolve_autoload_path_entry(segment, vendor_dir) {
+                let full_path = workspace_root.join(&relative_path);
+                if full_path.is_dir() {
+                    base_dirs.push(full_path);
+                }
+            }
+        }
+    }
+
+    // Scan each base directory for PHP class files.
+    let mut classmap = HashMap::new();
+
+    for base_dir in &base_dirs {
+        scan_directory_for_classes(base_dir, &mut classmap);
+    }
+
+    classmap
+}
+
+/// Recursively scan a directory for PHP files and extract class names
+/// using the lightweight byte-level scanner.
+fn scan_directory_for_classes(dir: &Path, classmap: &mut HashMap<String, PathBuf>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_directory_for_classes(&path, classmap);
+        } else if path.extension().is_some_and(|ext| ext == "php")
+            && let Ok(content) = fs::read(&path)
+        {
+            let classes = crate::classmap_scanner::find_classes(&content);
+            for fqn in classes {
+                classmap.entry(fqn).or_insert_with(|| path.clone());
+            }
+        }
+    }
+}
+
 /// Detect `.phar` archive references in a PHP bootstrap file.
 ///
 /// Scans the file content for patterns like:

@@ -1071,6 +1071,21 @@ impl Backend {
         let symbol_count = classmap.len();
         *self.classmap.write() = classmap;
 
+        // ── PSR-0 (legacy) classmap ─────────────────────────────────
+        // Packages that declare `autoload.psr-0` in their composer.json
+        // (e.g. HTMLPurifier) are listed in `autoload_namespaces.php`.
+        // Scan the listed directories and merge discovered classes into
+        // the classmap so they are resolvable via `find_or_load_class`.
+        let psr0_cm = composer::parse_autoload_namespaces(root, &vendor_dir);
+        if !psr0_cm.is_empty() {
+            let count = psr0_cm.len();
+            let mut cm = self.classmap.write();
+            for (fqn, path) in psr0_cm {
+                cm.entry(fqn).or_insert(path);
+            }
+            tracing::info!("PSR-0: {} classes from autoload_namespaces.php", count);
+        }
+
         // ── Autoload files ──────────────────────────────────────────
         if let Some(tok) = progress_token {
             self.progress_report(tok, 70, Some("Scanning autoload files".to_string()))
@@ -1188,7 +1203,12 @@ impl Backend {
             // Load the subproject's Composer classmap as a skip set,
             // then self-scan its PSR-4 directories and vendor packages
             // for anything the classmap missed.
-            let sub_cm = composer::parse_autoload_classmap(sub_root, vendor_dir);
+            let mut sub_cm = composer::parse_autoload_classmap(sub_root, vendor_dir);
+            // Merge PSR-0 classes for this subproject.
+            let psr0_cm = composer::parse_autoload_namespaces(sub_root, vendor_dir);
+            for (fqn, path) in psr0_cm {
+                sub_cm.entry(fqn).or_insert(path);
+            }
             let sub_skip: HashSet<PathBuf> = sub_cm.values().cloned().collect();
             let scan = self.build_self_scan_composer(sub_root, vendor_dir, None, &sub_skip);
             self.populate_autoload_indices(&scan);
