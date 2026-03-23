@@ -211,6 +211,34 @@ class TypeNarrowingDemo
 }
 
 
+// ── instanceof self/static/parent Narrowing ────────────────────────────────
+
+class InstanceofSelfDemo extends ScaffoldingSedan
+{
+    public function sport(): void {}
+
+    public function demo(ScaffoldingMotor $m): void
+    {
+        // instanceof self — narrows to InstanceofSelfDemo
+        assert($m instanceof self);
+        $m->cruise();                             // inherited from ScaffoldingSedan
+        $m->sport();                              // own method via self narrowing
+
+        // instanceof static — narrows to InstanceofSelfDemo
+        $x = getUnknownValue();
+        if ($x instanceof static) {
+            $x->sport();                          // narrowed to static (this class)
+        }
+
+        // instanceof parent — narrows to ScaffoldingSedan
+        $y = getUnknownValue();
+        if ($y instanceof parent) {
+            $y->cruise();                         // narrowed to parent (ScaffoldingSedan)
+        }
+    }
+}
+
+
 // ── Custom Assert Narrowing ─────────────────────────────────────────────────
 
 class AssertNarrowingDemo
@@ -2659,6 +2687,16 @@ class TreeMapperImpl
 
 // ── Demo-Specific Scaffolding ───────────────────────────────────────────────
 
+class ScaffoldingMotor
+{
+    public function start(): void {}
+}
+
+class ScaffoldingSedan extends ScaffoldingMotor
+{
+    public function cruise(): void {}
+}
+
 abstract class ScaffoldingAbstractShape
 {
     abstract public function area(): float;
@@ -4350,6 +4388,17 @@ function runDemoAssertions(): void
 
     assert(StaticAssert::isRock(new Rock()) === true, 'StaticAssert::isRock(Rock) must return true');
     assert(StaticAssert::isNotRock(new Banana()) === true, 'StaticAssert::isNotRock(Banana) must return true');
+
+    // ── instanceof self/static/parent ───────────────────────────────────
+    $sedan = new ScaffoldingSedan();
+    assert($sedan instanceof ScaffoldingMotor, 'ScaffoldingSedan must extend ScaffoldingMotor');
+    assert(method_exists($sedan, 'cruise'), 'ScaffoldingSedan must have cruise()');
+    assert(method_exists($sedan, 'start'), 'ScaffoldingSedan must inherit start()');
+
+    $demo = new InstanceofSelfDemo();
+    assert($demo instanceof ScaffoldingSedan, 'InstanceofSelfDemo must extend ScaffoldingSedan');
+    assert(method_exists($demo, 'sport'), 'InstanceofSelfDemo must have sport()');
+    assert(method_exists($demo, 'cruise'), 'InstanceofSelfDemo must inherit cruise()');
 
     // ── Method-level @template (runtime resolution) ─────────────────────
     $locator = new ServiceLocator();

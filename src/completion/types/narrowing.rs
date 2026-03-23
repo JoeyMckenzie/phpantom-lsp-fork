@@ -378,6 +378,9 @@ pub(in crate::completion) fn try_extract_instanceof<'b>(
             // RHS is the class name
             match bin.rhs {
                 Expression::Identifier(ident) => Some(ident.value().to_string()),
+                Expression::Self_(_) => Some("self".to_string()),
+                Expression::Static(_) => Some("static".to_string()),
+                Expression::Parent(_) => Some("parent".to_string()),
                 _ => None,
             }
         }

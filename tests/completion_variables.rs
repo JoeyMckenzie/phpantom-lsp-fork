@@ -4622,6 +4622,312 @@ async fn test_completion_assert_instanceof_parenthesised() {
     }
 }
 
+// ─── instanceof self/static/parent narrowing ────────────────────────────────
+
+/// `assert($param instanceof self)` inside a class method should narrow
+/// the variable to the current class. The Mago AST produces
+/// `Expression::Self_` (not `Expression::Identifier`) for the `self` keyword.
+#[tokio::test]
+async fn test_completion_assert_instanceof_self_narrows() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///assert_instanceof_self.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                   // 0
+        "class BaseCatalogFeature {\n",                              // 1
+        "    public function baseMethod(): void {}\n",               // 2
+        "}\n",                                                       // 3
+        "class SpecificFeature extends BaseCatalogFeature {\n",      // 4
+        "    public function specificMethod(): void {}\n",           // 5
+        "    public function test(BaseCatalogFeature $f): void {\n", // 6
+        "        assert($f instanceof self);\n",                     // 7
+        "        $f->\n",                                            // 8
+        "    }\n",                                                   // 9
+        "}\n",                                                       // 10
+    );
+
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text.to_string(),
+            },
+        })
+        .await;
+
+    let result = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: 8,
+                    character: 12,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_some(), "Should return completions");
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+
+            assert!(
+                method_names.contains(&"specificMethod"),
+                "Should include SpecificFeature's own 'specificMethod' after instanceof self, got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"baseMethod"),
+                "Should include inherited 'baseMethod' after instanceof self, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// `if ($param instanceof static)` should narrow to the current class.
+/// The Mago AST produces `Expression::Static` for the `static` keyword.
+#[tokio::test]
+async fn test_completion_if_instanceof_static_narrows() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///instanceof_static.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                           // 0
+        "class BaseModel {\n",                               // 1
+        "    public function baseMethod(): void {}\n",       // 2
+        "}\n",                                               // 3
+        "class UserModel extends BaseModel {\n",             // 4
+        "    public function userMethod(): void {}\n",       // 5
+        "    public function check(BaseModel $m): void {\n", // 6
+        "        if ($m instanceof static) {\n",             // 7
+        "            $m->\n",                                // 8
+        "        }\n",                                       // 9
+        "    }\n",                                           // 10
+        "}\n",                                               // 11
+    );
+
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text.to_string(),
+            },
+        })
+        .await;
+
+    let result = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: 8,
+                    character: 16,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_some(), "Should return completions");
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+
+            assert!(
+                method_names.contains(&"userMethod"),
+                "Should include UserModel's 'userMethod' after instanceof static, got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"baseMethod"),
+                "Should include inherited 'baseMethod' after instanceof static, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// `if ($param instanceof parent)` should narrow to the parent class.
+/// The Mago AST produces `Expression::Parent` for the `parent` keyword.
+#[tokio::test]
+async fn test_completion_if_instanceof_parent_narrows() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///instanceof_parent.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                         // 0
+        "class Vehicle {\n",                               // 1
+        "    public function drive(): void {}\n",          // 2
+        "}\n",                                             // 3
+        "class Car extends Vehicle {\n",                   // 4
+        "    public function honk(): void {}\n",           // 5
+        "}\n",                                             // 6
+        "class SportsCar extends Car {\n",                 // 7
+        "    public function turbo(): void {}\n",          // 8
+        "    public function check(Vehicle $v): void {\n", // 9
+        "        if ($v instanceof parent) {\n",           // 10
+        "            $v->\n",                              // 11
+        "        }\n",                                     // 12
+        "    }\n",                                         // 13
+        "}\n",                                             // 14
+    );
+
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text.to_string(),
+            },
+        })
+        .await;
+
+    let result = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: 11,
+                    character: 16,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_some(), "Should return completions");
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+
+            assert!(
+                method_names.contains(&"honk"),
+                "Should include Car's 'honk' after instanceof parent, got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"drive"),
+                "Should include Vehicle's 'drive' after instanceof parent, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// Guard clause with `instanceof self` and early return should apply
+/// negative narrowing for subsequent code.
+#[tokio::test]
+async fn test_guard_clause_instanceof_self_excludes() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///guard_instanceof_self.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                  // 0
+        "class Animal {\n",                         // 1
+        "    public function breathe(): void {}\n", // 2
+        "}\n",                                      // 3
+        "class Dog extends Animal {\n",             // 4
+        "    public function bark(): void {}\n",    // 5
+        "}\n",                                      // 6
+        "class Cat extends Animal {\n",             // 7
+        "    public function purr(): void {}\n",    // 8
+        "    public function handle(): void {\n",   // 9
+        "        if (rand(0,1)) {\n",               // 10
+        "            $a = new Dog();\n",            // 11
+        "        } else {\n",                       // 12
+        "            $a = new Cat();\n",            // 13
+        "        }\n",                              // 14
+        "        if ($a instanceof self) {\n",      // 15
+        "            return;\n",                    // 16
+        "        }\n",                              // 17
+        "        $a->\n",                           // 18
+        "    }\n",                                  // 19
+        "}\n",                                      // 20
+    );
+
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text.to_string(),
+            },
+        })
+        .await;
+
+    let result = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: 18,
+                    character: 12,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_some(), "Should return completions");
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap())
+                .collect();
+
+            assert!(
+                method_names.contains(&"bark"),
+                "Should include Dog's 'bark' after guard excludes Cat (self), got: {:?}",
+                method_names
+            );
+            assert!(
+                !method_names.contains(&"purr"),
+                "Should NOT include Cat's 'purr' after guard clause with instanceof self, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
 // ─── negated instanceof narrowing ───────────────────────────────────────────
 
 /// `assert(!$var instanceof ClassName)` should *exclude* ClassName from

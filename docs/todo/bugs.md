@@ -15,36 +15,6 @@ within the same impact tier.
 
 ---
 
-#### B9. `assert($x instanceof self)` narrowing ignores `self`/`static`/`parent`
-
-| | |
-|---|---|
-| **Impact** | Medium-High |
-| **Effort** | Low |
-
-`try_extract_instanceof` in `completion/types/narrowing.rs` only matches
-`Expression::Identifier` for the RHS of an `instanceof` check. When the
-RHS is `self`, `static`, or `parent`, the Mago AST produces
-`Expression::Self_`, `Expression::Static`, or `Expression::Parent`
-instead, which fall through to `None`. This means
-`assert($feature instanceof self)` never narrows the variable.
-
-The fix is to add three arms to the `match bin.rhs` block in
-`try_extract_instanceof` that map `Self_` → `"self"`, `Static` →
-`"static"`, `Parent` → `"parent"`. The downstream
-`apply_instanceof_inclusion` already resolves `"self"` etc. to the
-current class via `type_hint_to_classes`.
-
-**Reproduce:** any method with a `BaseCatalogFeature` parameter that
-calls `assert($feature instanceof self)` then accesses subclass-only
-methods on `$feature`. Also affects Mockery test patterns:
-`$mock = $this->mock(X::class); assert($mock instanceof X);`.
-
-**Triage count:** ~30 diagnostics in luxplus/shared (18 BaseCatalogFeature,
-11 MockInterface, 1 Elasticsearch).
-
----
-
 #### B10. Negative narrowing after early return not applied
 
 | | |

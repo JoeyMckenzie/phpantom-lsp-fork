@@ -211,6 +211,25 @@ fn type_hint_to_classes_depth(
             .collect();
     }
 
+    // `parent` refers to the parent class of the owning class.
+    if hint == "parent" {
+        let parent_name = all_classes
+            .iter()
+            .find(|c| c.name == owning_class_name)
+            .and_then(|c| c.parent_class.clone())
+            .or_else(|| class_loader(owning_class_name).and_then(|c| c.parent_class.clone()));
+        if let Some(parent) = parent_name {
+            return all_classes
+                .iter()
+                .find(|c| c.name == parent)
+                .map(|c| ClassInfo::clone(c))
+                .or_else(|| class_loader(&parent).map(Arc::unwrap_or_clone))
+                .into_iter()
+                .collect();
+        }
+        return vec![];
+    }
+
     // ── Parse generic arguments (if any) ──
     // `Collection<int, User>` → base_hint = `Collection`, generic_args = ["int", "User"]
     // `Foo`                   → base_hint = `Foo`,        generic_args = []
