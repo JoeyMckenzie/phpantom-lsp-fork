@@ -677,8 +677,7 @@ significantly easier:
 | T7 (`key-of<T>` / `value-of<T>`) | `PhpType::KeyOf` and `PhpType::ValueOf` are first-class variants — just add resolution logic. |
 | T2 (`@phpstan-type` aliases) | Type aliases map a name to a `PhpType`. Substitution is a tree transform. |
 | T3 (`@phpstan-import-type`) | Same — cross-file alias resolution becomes FQN lookup + `PhpType` storage. |
-| C2 (version-aware type hints) | Replace `PhpType` nodes instead of patching type strings. |
-| C3 (`#[ArrayShape]` return shapes) | Build a `PhpType::Shape` directly from attribute data. |
+| C2 (`#[ArrayShape]` return shapes) | Build a `PhpType::Shape` directly from attribute data. |
 | L1 (Facade completion) | Preserve full `PhpType` from the concrete class instead of flattening to `@method static` strings. |
 | L4 (Custom Eloquent builders) | Resolve `HasBuilder<X>` as `PhpType::Reference { generic_args: [X] }` and extract X structurally. |
 | BL1 (Blade support) | Blade variable types (`$loop` as `object{index: int, ...}`) are `PhpType::Shape` values, not hand-built strings. |

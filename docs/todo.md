@@ -65,8 +65,7 @@ within the same impact tier.
 | #   | Item                                                                                                                       | Impact      | Effort |
 | --- | -------------------------------------------------------------------------------------------------------------------------- | ----------- | ------ |
 |     | Clear [refactoring gate](todo/refactor.md)                                                                                 | —           | —      |
-| C2  | [`LanguageLevelTypeAware` version-aware type hints](todo/completion.md#c2-languageleveltypeaware-version-aware-type-hints) | Medium-High | Medium |
-| C3  | [`#[ArrayShape]` return shapes on stub functions](todo/completion.md#c3-arrayshape-return-shapes-on-stub-functions)        | Medium      | Medium |
+| C2  | [`#[ArrayShape]` return shapes on stub functions](todo/completion.md#c2-arrayshape-return-shapes-on-stub-functions)        | Medium      | Medium |
 | T1  | [First-class callable resolution](todo/type-inference.md#t1-first-class-callables)                                         | Medium      | Medium |
 | T2  | [`@phpstan-type` / `@psalm-type` local type aliases](todo/type-inference.md#t2-local-type-aliases)                         | Medium      | Medium |
 | T3  | [`@phpstan-import-type` cross-file type imports](todo/type-inference.md#t3-cross-file-type-imports)                        | Medium      | Medium |
@@ -102,15 +101,15 @@ unlikely to move the needle for most users.
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ----------- |
 |     | **[Completion](todo/completion.md)**                                                                                                                         |             |             |
 | C1  | Array functions needing new code paths                                                                                                                       | Medium     | High        |
-| C10 | [Lazy documentation via `completionItem/resolve`](todo/completion.md#c10-lazy-documentation-via-completionitemresolve)                                        | Medium     | Medium      |
-| C12 | [Smarter member ordering after `->` / `::`](todo/completion.md#c12-smarter-member-ordering-after----)                                                        | Medium     | Medium      |
-| C4  | Go-to-definition for array shape keys via bracket access                                                                                                     | Low-Medium | Medium      |
-| C8  | `class_alias()` support                                                                                                                                      | Low-Medium | Medium      |
-| C9  | [Filesystem proximity as an affinity tiebreaker](todo/completion.md#c9-filesystem-proximity-as-an-affinity-tiebreaker)                                        | Low-Medium | Low         |
-| C5  | Non-array functions with dynamic return types                                                                                                                | Low        | High        |
-| C6  | `#[ReturnTypeContract]` parameter-dependent return types                                                                                                     | Low        | Low         |
-| C7  | `#[ExpectedValues]` parameter value suggestions                                                                                                              | Low        | Medium      |
-| C11 | [Deprecation markers on class-name completions from all sources](todo/completion.md#c11-deprecation-markers-on-class-name-completions-from-all-sources)       | Low        | Low         |
+| C9  | [Lazy documentation via `completionItem/resolve`](todo/completion.md#c9-lazy-documentation-via-completionitemresolve)                                         | Medium     | Medium      |
+| C11 | [Smarter member ordering after `->` / `::`](todo/completion.md#c11-smarter-member-ordering-after----)                                                        | Medium     | Medium      |
+| C3  | Go-to-definition for array shape keys via bracket access                                                                                                     | Low-Medium | Medium      |
+| C7  | `class_alias()` support                                                                                                                                      | Low-Medium | Medium      |
+| C8  | [Filesystem proximity as an affinity tiebreaker](todo/completion.md#c8-filesystem-proximity-as-an-affinity-tiebreaker)                                        | Low-Medium | Low         |
+| C4  | Non-array functions with dynamic return types                                                                                                                | Low        | High        |
+| C5  | `#[ReturnTypeContract]` parameter-dependent return types                                                                                                     | Low        | Low         |
+| C6  | `#[ExpectedValues]` parameter value suggestions                                                                                                              | Low        | Medium      |
+| C10 | [Deprecation markers on class-name completions from all sources](todo/completion.md#c10-deprecation-markers-on-class-name-completions-from-all-sources)       | Low        | Low         |
 |     | **[Type Inference](todo/type-inference.md)**                                                                                                                 |            |             |
 | T7  | [`key-of<T>` and `value-of<T>` resolution](todo/type-inference.md#t7-key-oft-and-value-oft-resolution)                                                       | Medium     | Medium      |
 | T6  | `Closure::bind()` / `Closure::fromCallable()` return type preservation                                                                                       | Low-Medium | Low-Medium  |

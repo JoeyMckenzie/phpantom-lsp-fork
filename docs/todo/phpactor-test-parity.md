@@ -371,7 +371,7 @@ initial value argument.
 
 **phpactor ref:** `function/array_sum.test`
 
-**Related todo:** [C5](completion.md#c5-non-array-functions-with-dynamic-return-types)
+**Related todo:** [C4](completion.md#c4-non-array-functions-with-dynamic-return-types)
 
 **Effort: Medium** — requires function-specific return type logic.
 

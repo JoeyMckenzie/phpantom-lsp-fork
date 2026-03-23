@@ -48,55 +48,7 @@ These functions have return type semantics that don't fit into either
 
 ---
 
-## C2. `LanguageLevelTypeAware` version-aware type hints
-
-**Impact: Medium · Effort: Medium**
-
-phpstorm-stubs use a second version attribute, `#[LanguageLevelTypeAware]`,
-to override **type hints** (not element availability) based on the PHP
-version. Unlike `#[PhpStormStubsElementAvailable]` which controls whether
-an entire function, method, or parameter exists, `LanguageLevelTypeAware`
-changes the type of a parameter or return value while the element itself
-stays present. There are ~2,000 occurrences across the stubs.
-
-The attribute takes an associative array mapping version strings to type
-hints, plus a `default` fallback:
-
-```php
-// Return type changes by version:
-#[LanguageLevelTypeAware(["8.4" => "StreamBucket|null"], default: "object|null")]
-function stream_bucket_make_writeable($brigade) {}
-
-// Parameter type changes by version:
-function array_key_exists(
-    $key,
-    #[LanguageLevelTypeAware(["8.0" => "array"], default: "array|ArrayObject")] $array
-): bool {}
-```
-
-PHPantom currently ignores these attributes. The native type hint from the
-AST is used as-is, which means on PHP 8.4 a function might show
-`object|null` instead of `StreamBucket|null`, or a parameter might show
-`array|ArrayObject` instead of `array`.
-
-**Implementation:** During parameter and return-type extraction (when
-`DocblockCtx.php_version` is set), scan the element's attributes for
-`LanguageLevelTypeAware`. Find the highest version key that is ≤ the
-target version. If found, use that type string as the native type hint;
-otherwise use the `default` value. This should integrate into the same
-extraction points that already handle `PhpStormStubsElementAvailable`.
-
-**Attribute FQN:** `JetBrains\PhpStorm\Internal\LanguageLevelTypeAware`.
-Stub files import it via `use` statements, sometimes with aliases:
-`LanguageAware` (~249 usages in `intl/intl.php`) and `PhpVersionAware`
-(~101 usages in `ldap/ldap.php`). The attribute matcher must resolve
-through the `DocblockCtx` use-map (like `PhpStormStubsElementAvailable`
-and `Deprecated` already do) and compare the last segment of the resolved
-FQN, so all three names work automatically.
-
----
-
-## C3. `#[ArrayShape]` return shapes on stub functions
+## C2. `#[ArrayShape]` return shapes on stub functions
 
 **Impact: Medium · Effort: Medium**
 
@@ -134,7 +86,7 @@ parsing and should feed into the same `return_type` field on
 
 ---
 
-## C4. Go-to-definition for array shape keys via bracket access
+## C3. Go-to-definition for array shape keys via bracket access
 
 **Impact: Low-Medium · Effort: Medium**
 
@@ -154,7 +106,7 @@ key inside the matching `array{…}` annotation.
 
 ---
 
-## C5. Non-array functions with dynamic return types
+## C4. Non-array functions with dynamic return types
 
 **Impact: Low · Effort: High**
 
@@ -186,7 +138,7 @@ return types (less impactful for class-based completion).
 
 ---
 
-## C6. `#[ReturnTypeContract]` parameter-dependent return types
+## C5. `#[ReturnTypeContract]` parameter-dependent return types
 
 **Impact: Low · Effort: Low**
 
@@ -231,7 +183,7 @@ type. This integrates into the call return type resolution path.
 
 ---
 
-## C7. `#[ExpectedValues]` parameter value suggestions
+## C6. `#[ExpectedValues]` parameter value suggestions
 
 **Impact: Low · Effort: Medium**
 
@@ -278,7 +230,7 @@ combinations.
 
 ---
 
-## C8. `class_alias()` support
+## C7. `class_alias()` support
 
 **Impact: Low-Medium · Effort: Medium**
 
@@ -320,7 +272,7 @@ and no go-to-definition because PHPantom has no record of the alias.
 
 ---
 
-## C9. Filesystem proximity as an affinity tiebreaker
+## C8. Filesystem proximity as an affinity tiebreaker
 
 **Impact: Low-Medium · Effort: Low**
 
@@ -354,7 +306,7 @@ candidate file.
 3. **Pass the current file path** through `ClassCompletionParams` and
    into `ClassItemCtx` so it's available during sort-text construction.
 
-## C10. Lazy documentation via `completionItem/resolve`
+## C9. Lazy documentation via `completionItem/resolve`
 
 **Impact: Medium · Effort: Medium**
 
@@ -388,7 +340,7 @@ improves perceived latency on keystroke.
    optionally `detail`) eagerly in `build_item` and
    `build_completion_items`. Set `data` instead.
 
-## C11. Deprecation markers on class-name completions from all sources
+## C10. Deprecation markers on class-name completions from all sources
 
 **Impact: Low · Effort: Low**
 
@@ -408,7 +360,7 @@ This is a small quality-of-life improvement: deprecated classes would
 show with a strikethrough in the completion menu across all sources,
 not just same-namespace ones.
 
-## C12. Smarter member ordering after `->` / `::`
+## C11. Smarter member ordering after `->` / `::`
 
 **Impact: Medium · Effort: needs planning**
 
