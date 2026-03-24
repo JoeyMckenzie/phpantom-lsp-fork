@@ -15,6 +15,7 @@ use std::collections::HashMap;
 /// - [`ast_update`]: The `update_ast` orchestrator and name resolution
 mod ast_update;
 mod classes;
+pub(crate) mod error_format;
 mod functions;
 mod use_statements;
 

@@ -81,7 +81,7 @@ impl Backend {
                 .iter()
                 .map(|e| {
                     let span = e.span();
-                    (e.to_string(), span.start.offset, span.end.offset)
+                    (super::error_format::format_parse_error(e), span.start.offset, span.end.offset)
                 })
                 .collect();
             self.parse_errors.write().insert(uri.to_string(), errors);
