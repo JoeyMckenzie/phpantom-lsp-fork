@@ -543,6 +543,31 @@ pub(crate) fn resolve_target_classes_expr(
 
         // ── Enum case / static member access ────────────────────
         SubjectExpr::StaticAccess { class, .. } => {
+            // Handle self/static/parent keywords — SubjectExpr::parse
+            // produces StaticAccess for "self::MONTH", "static::FOO",
+            // etc., but "self"/"static"/"parent" are keywords, not
+            // class names, so find_class_by_name / class_loader won't
+            // find them.
+            match class.as_str() {
+                "self" | "static" => {
+                    return current_class
+                        .map(|cc| Arc::new(cc.clone()))
+                        .into_iter()
+                        .collect();
+                }
+                "parent" => {
+                    if let Some(cc) = current_class
+                        && let Some(ref parent_name) = cc.parent_class
+                    {
+                        if let Some(cls) = find_class_by_name(all_classes, parent_name) {
+                            return vec![Arc::clone(cls)];
+                        }
+                        return class_loader(parent_name).into_iter().collect();
+                    }
+                    return vec![];
+                }
+                _ => {}
+            }
             if let Some(cls) = find_class_by_name(all_classes, class) {
                 return vec![Arc::clone(cls)];
             }

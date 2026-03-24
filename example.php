@@ -1664,6 +1664,9 @@ class StaticEnumDemo
         $status = Status::Active;
         $status->name;               // resolves through variable
         $status->value;
+
+        // self::/static:: inside enum methods resolve to the enum type
+        Status::defaultValue();      // self::Active->value inside enum
     }
 }
 
@@ -3273,6 +3276,12 @@ enum Status: string
     {
         return $this === self::Active;
     }
+
+    /** Returns the raw backing value of the Active case. */
+    public static function defaultValue(): string
+    {
+        return self::Active->value;  // self::CaseName->value resolved
+    }
 }
 
 enum Priority: int
@@ -4707,6 +4716,9 @@ function runDemoAssertions(): void
 
     $tryFrom = Status::tryFrom('nonexistent');
     assert($tryFrom === null, 'Status::tryFrom("nonexistent") must be null');
+
+    $defaultVal = Status::defaultValue();
+    assert($defaultVal === 'active', 'Status::defaultValue() must return "active" (self::Active->value)');
 
     // ── Response methods ────────────────────────────────────────────────
     $response = new Response(200, 'OK');

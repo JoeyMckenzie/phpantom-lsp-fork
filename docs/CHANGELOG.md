@@ -87,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Trait alias go-to-definition.** Clicking a trait alias (e.g. `$this->__foo()` from `use Foo { foo as __foo; }`) now jumps to the trait method instead of the class's own same-named method.
 - **Variable type inside self-referencing assignment RHS.** In `$request = new Foo(arg: $request->uuid)`, the `$request` reference inside the constructor arguments now correctly resolves to the original type instead of the type being assigned.
 - **Self-referential array key assignments no longer crash.** Patterns like `$numbers['price'] = $numbers['price']->add(...)` no longer cause a stack overflow during hover or completion.
+- **`self::/static::/parent::` in member access chains.** Expressions like `self::Active->value` inside an enum method now resolve correctly. Previously, `self`, `static`, and `parent` were only recognized as bare subjects, not when followed by `::MemberName` in a chain.
 
 ## [0.5.0] - 2026-03-12
 

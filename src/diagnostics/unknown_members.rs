@@ -3842,4 +3842,82 @@ class Svc {
             "should not flag gammaMethod after two guard clauses exclude Alpha and Beta, got: {bad:?}"
         );
     }
+
+    // ── self::/static::/parent:: in static access subjects ──────────
+
+    #[test]
+    fn no_diagnostic_for_self_enum_case_value() {
+        let php = r#"<?php
+enum SizeUnit: string {
+    case pcs = 'pcs';
+    case pair = 'pair';
+    case g = 'g';
+
+    public function translation(): string {
+        return self::pcs->value;
+    }
+
+    public static function units(): array {
+        return [
+            self::pcs->value,
+            self::pair->value,
+            self::g->value,
+        ];
+    }
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
+
+    #[test]
+    fn no_diagnostic_for_static_enum_case_value() {
+        let php = r#"<?php
+enum Currency: string {
+    case USD = 'usd';
+    case EUR = 'eur';
+
+    public static function defaults(): array {
+        return [static::USD->value];
+    }
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
+
+    #[test]
+    fn no_diagnostic_for_self_enum_case_name() {
+        let php = r#"<?php
+enum Color: int {
+    case Red = 1;
+    case Blue = 2;
+
+    public function label(): string {
+        return self::Red->name;
+    }
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
+
+    #[test]
+    fn no_diagnostic_for_self_static_access_on_regular_class() {
+        let php = r#"<?php
+class Config {
+    public const VERSION = '1.0';
+    public static function version(): string { return self::VERSION; }
+    public function test(): string {
+        return static::version();
+    }
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
 }

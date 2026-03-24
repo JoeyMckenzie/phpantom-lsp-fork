@@ -273,9 +273,7 @@ impl Backend {
                 // the stub win ensures the correct signature, return
                 // type, and deprecation status are used everywhere
                 // (hover, completion, diagnostics).
-                if func_info.is_polyfill
-                    && self.stub_function_index.contains_key(fqn.as_str())
-                {
+                if func_info.is_polyfill && self.stub_function_index.contains_key(fqn.as_str()) {
                     continue;
                 }
 
