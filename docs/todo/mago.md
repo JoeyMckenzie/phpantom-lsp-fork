@@ -88,93 +88,115 @@ Add to `docs/todo.md` after Sprint 4:
 
 ## M2. Migrate to `mago-docblock`
 
-**What it replaces:** Tag extraction logic in `src/docblock/tags.rs`
-(1,855 lines) and the trivia-scanning helper
-`get_docblock_text_for_node`.
-
-**Why:** Our tag extraction is line-by-line string scanning. It
-handles the common cases but is fragile on multi-line tags, nested
-braces across lines, tags inside code blocks, and inline `{@see}`
-tags. `mago-docblock` is a proper lexer + parser that produces a
-structured `Document` with `Element::Tag { name, description, span }`
-entries. It also works directly with mago-syntax trivia tokens,
-eliminating our manual trivia walk.
+**What it replaces:** Tag extraction logic in `src/docblock/tags.rs`,
+`src/docblock/templates.rs`, and `src/docblock/virtual_members.rs`
+that used line-by-line string scanning.
 
 **What it does NOT replace:** The type expression parsing inside tag
 descriptions (that is M4). After this step, we still extract the raw
 description string from tags and process it with our existing
 string-based type code. The structured type migration happens in M4.
 
-**Risk:** Medium. Many call sites extract specific tags by name. The
-adapter layer must preserve the same return types (`Option<String>`,
-`Vec<String>`, etc.) until M4 replaces them with structured types.
+### Completed
 
-### Steps
+1. ✅ **Added `mago-docblock` to `Cargo.toml`.**
 
-1. **Add `mago-docblock` to `Cargo.toml`.**
+2. ✅ **Created `src/docblock/parser.rs` — the parsing adapter.**
+   `DocblockInfo` / `TagInfo` structs own parsed tag data (name,
+   kind, description). `parse_docblock()` takes a raw `&str` +
+   `Span`, allocates into a short-lived bumpalo arena, and returns
+   owned `DocblockInfo`. `parse_docblock_trivia()` ready for future
+   use from `get_docblock_text_for_node` callers.
 
-2. **Create `src/docblock/parser.rs` — the parsing adapter.**
-   This module provides a function that takes a trivia slice (or raw
-   docblock string) and returns a `mago_docblock::Document`. It
-   handles the `Result` from `mago-docblock` and falls back
-   gracefully on parse errors (return `None` / empty results, never
-   panic).
+3. ✅ **Migrated all tag extraction functions in `tags.rs`.**
+   `extract_return_type`, `extract_var_type`, `extract_var_type_with_name`,
+   `extract_deprecation_message`, `has_deprecated_tag`,
+   `extract_removed_version`, `extract_see_references`,
+   `extract_deprecation_with_see`, `extract_mixin_tags`,
+   `extract_throws_tags`, `extract_type_assertions`,
+   `extract_param_raw_type`, `extract_all_param_tags`,
+   `extract_param_closure_this`, `extract_param_description`,
+   `extract_return_description`, `extract_link_urls`.
+   Deleted dead code: `extract_tag_type`, `normalize_bracket_whitespace`.
 
-3. **Rewrite `get_docblock_text_for_node` to use trivia-based parsing.**
-   Currently this function scans backward through trivia tokens to
-   find the `/** ... */` text. Replace it with
-   `mago_docblock::parse_trivia()` which takes a `Trivia` token
-   directly. The caller gets a `Document` instead of a raw `&str`.
+4. ✅ **Migrated template/generics tag extraction in `templates.rs`.**
+   `extract_template_params_full`, `extract_template_param_bindings`,
+   `extract_generics_tag`, `extract_type_aliases`,
+   `find_class_string_param_name`. Handles `@phpstan-extends` /
+   `@phpstan-use` / `@phpstan-implements` via name-based fallback
+   (mago-docblock classifies these as `TagKind::Other`).
 
-4. **Rewrite tag extraction functions one at a time.**
-   Each function in `tags.rs` (`extract_return_type`,
-   `extract_deprecation_message`, `extract_mixin_tags`,
-   `extract_type_assertions`, `extract_param_raw_type`,
-   `extract_all_param_tags`, `extract_var_type`, etc.) becomes a
-   thin wrapper that:
-   - Parses the docblock into a `Document` (or receives one).
-   - Filters `Element::Tag` entries by `tag.name`.
-   - Extracts the `description` field.
-   - Returns the same type as before (`Option<String>`, etc.).
+5. ✅ **Migrated virtual member tag extraction in `virtual_members.rs`.**
+   `extract_property_tags`, `extract_method_tags`.
 
-   Do this incrementally — one function per commit. Tests must pass
-   after each commit.
+### Remaining
 
-5. **Rewrite template/generics tag extraction.**
-   `src/docblock/templates.rs` extracts `@template`, `@extends`,
-   `@implements`, `@use` generics, `@phpstan-type`,
-   `@phpstan-import-type`. Same approach: filter tags by name, parse
-   description. The description parsing (extracting template names,
-   bounds, generic args) stays as-is until M4.
+These are optional follow-up items that would benefit from being
+rewritten to use mago-docblock but are not blocking M3 or M4.
 
-6. **Rewrite virtual member tag extraction.**
-   `src/docblock/virtual_members.rs` extracts `@method`,
-   `@property`, `@property-read`, `@property-write`. Same approach.
+6. **Migrate `extract_conditional_return_type` in `conditional.rs`.**
+   Still uses manual `/** */` stripping and line-by-line scanning in
+   `extract_raw_return_content()` to collect multi-line `@return`
+   content. Could use `parse_docblock_for_tags` + `TagKind::Return`
+   to get the description directly (mago-docblock already joins
+   multi-line tag content). The conditional expression parser itself
+   (`parse_conditional_expr`) would stay unchanged.
 
-7. **Update `DocblockCtx` and parsing pipeline.**
+7. **Migrate `get_docblock_text_for_node` callers to use
+   `parse_docblock_trivia` directly.**
+   Currently ~15 call sites in `parser/classes.rs`,
+   `parser/functions.rs`, `parser/mod.rs`, and
+   `code_actions/generate_constructor.rs` follow the pattern:
+   `get_docblock_text_for_node(trivia, content, node)` →
+   `extract_*(raw_text)`. Each call parses the docblock twice: once
+   to find the trivia token, once inside the extraction function.
+   These could call `parse_docblock_trivia` once and pass the
+   `DocblockInfo` to extraction functions, or the extraction
+   functions could accept `&DocblockInfo` directly. This is a
+   performance improvement and API cleanup, not a correctness fix.
+
+8. **Update `DocblockCtx` to carry parsed `DocblockInfo`.**
    `DocblockCtx` in `src/parser/mod.rs` carries trivia, content, and
-   context for docblock extraction during AST walks. Either pass the
-   parsed `Document` through it or restructure so that callers parse
-   on demand via the new adapter.
+   context for docblock extraction during AST walks. It could carry a
+   lazily-parsed `DocblockInfo` so that multiple tag extractions from
+   the same docblock share a single parse. This pairs naturally with
+   item 7.
 
-8. **Delete replaced code from `tags.rs`.**
-   After all extraction functions are migrated, the only remaining
-   code should be type-level helpers (`should_override_type`,
-   `resolve_effective_type`) that are not about parsing. Keep those
-   or move them to a more appropriate module.
+9. **Source-scanning functions are out of scope.**
+   `find_inline_var_docblock`, `find_var_raw_type_in_source`,
+   `find_iterable_raw_type_in_source`, and
+   `find_enclosing_return_type` scan backward through raw source
+   text looking for docblocks by byte offset. These are not
+   tag-extraction functions and cannot benefit from mago-docblock.
+   Type-level helpers (`should_override_type`,
+   `resolve_effective_type`, `is_compatible_refinement`) are type
+   logic, not parsing.
 
-9. **Run the full test suite.** The fixture runner tests exercise
-   docblock-dependent features (completion, hover, go-to-definition,
-   diagnostics). All must pass.
+### Notes
+
+- mago-docblock joins multi-line tag descriptions with `\n` rather
+  than spaces. The migrated functions normalise `\n` → space where
+  the old code joined continuation lines with spaces (descriptions,
+  type extraction). This preserves existing behaviour.
+
+- `@phpstan-extends`, `@phpstan-implements`, and `@phpstan-use` are
+  not recognised as dedicated `TagKind` variants by mago-docblock
+  (they become `TagKind::Other`). `extract_generics_tag` handles
+  this with a name-based fallback that checks `tag.name`.
+
+- `@removed` is similarly `TagKind::Other`; matched by name in
+  `extract_removed_version`.
 
 ### Performance note
 
-`mago-docblock` allocates into a bumpalo arena. For the incremental
-step (where we parse then immediately flatten to strings), we create
+`mago-docblock` allocates into a bumpalo arena. For the current
+approach (parse then immediately flatten to owned strings), we create
 and drop an arena per docblock. This is fine — bumpalo arena creation
 is a pointer bump, and the arena is dropped at the end of each
 extraction call. When M4 introduces structured types, the arena
-lifetime may be extended to match the type's lifetime.
+lifetime may be extended to match the type's lifetime. The follow-up
+items (7, 8) would reduce redundant parsing by sharing a single
+`DocblockInfo` across multiple extractions from the same docblock.
 
 ---
 

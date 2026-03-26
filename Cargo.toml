@@ -14,6 +14,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1.39", features = ["full"] }
 mago-syntax = "1.14"
 mago-database = "1.14"
+mago-docblock = "1.14"
 mago-span = "1.14"
 mago-formatter = "1.14"
 mago-php-version = "1.14"

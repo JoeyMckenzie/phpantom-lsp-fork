@@ -8,6 +8,9 @@
 
 use std::collections::HashMap;
 
+use mago_docblock::document::TagKind;
+
+use super::parser::parse_docblock;
 use super::types::{split_generic_args, split_type_token};
 use crate::types::{ConditionalReturnType, ParamCondition, TemplateVariance};
 
@@ -58,47 +61,47 @@ pub fn extract_template_params_with_bounds(docblock: &str) -> Vec<(String, Optio
 pub fn extract_template_params_full(
     docblock: &str,
 ) -> Vec<(String, Option<String>, TemplateVariance)> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
+
+    /// Map a `TagKind` to the corresponding `TemplateVariance`.
+    const fn variance_for(kind: TagKind) -> TemplateVariance {
+        match kind {
+            TagKind::TemplateCovariant
+            | TagKind::PhpstanTemplateCovariant
+            | TagKind::PsalmTemplateCovariant => TemplateVariance::Covariant,
+            TagKind::TemplateContravariant
+            | TagKind::PhpstanTemplateContravariant
+            | TagKind::PsalmTemplateContravariant => TemplateVariance::Contravariant,
+            _ => TemplateVariance::Invariant,
+        }
+    }
+
+    const TEMPLATE_KINDS: &[TagKind] = &[
+        TagKind::Template,
+        TagKind::TemplateCovariant,
+        TagKind::TemplateContravariant,
+        TagKind::PhpstanTemplate,
+        TagKind::PhpstanTemplateCovariant,
+        TagKind::PhpstanTemplateContravariant,
+        TagKind::PsalmTemplate,
+        TagKind::PsalmTemplateCovariant,
+        TagKind::PsalmTemplateContravariant,
+    ];
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        // Match all @template variants:
-        //   @template, @template-covariant, @template-contravariant,
-        //   @phpstan-template, @phpstan-template-covariant, etc.
-        let rest = if let Some(r) = trimmed.strip_prefix("@phpstan-template") {
-            r
-        } else if let Some(r) = trimmed.strip_prefix("@template") {
-            r
-        } else {
-            continue;
-        };
-
-        // After stripping the tag prefix, we may have a variance suffix
-        // like `-covariant` or `-contravariant` still attached.
-        let (rest, variance) = if let Some(r) = rest.strip_prefix("-covariant") {
-            (r, TemplateVariance::Covariant)
-        } else if let Some(r) = rest.strip_prefix("-contravariant") {
-            (r, TemplateVariance::Contravariant)
-        } else {
-            (rest, TemplateVariance::Invariant)
-        };
-
-        // Must be followed by whitespace.
-        let rest = rest.trim_start();
-        if rest.is_empty() {
+    for tag in info.tags_by_kinds(TEMPLATE_KINDS) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
             continue;
         }
 
+        let variance = variance_for(tag.kind);
+
         // The template parameter name is the first whitespace-delimited token.
-        let mut tokens = rest.split_whitespace();
+        let mut tokens = desc.split_whitespace();
         if let Some(name) = tokens.next() {
             // Sanity: template names are identifiers (start with a letter or _).
             if name
@@ -137,65 +140,58 @@ pub fn extract_template_param_bindings(
         return Vec::new();
     }
 
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
+    for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
+        }
 
-        if let Some(rest) = trimmed.strip_prefix("@param") {
-            let rest = rest.trim_start();
-            if rest.is_empty() {
+        // Extract the full type token (respects `<…>` nesting).
+        let (type_token, remainder) = split_type_token(desc);
+
+        // The next token should be the parameter name (e.g. `$model`).
+        // It may have a variadic prefix: `...$items`.
+        let param_name = match remainder.split_whitespace().next() {
+            Some(name) if name.starts_with('$') => name,
+            Some(name) if name.starts_with("...$") => &name[3..],
+            _ => continue,
+        };
+
+        // Strip nullable prefix and `|null` suffix to get the core type.
+        let core = type_token.strip_prefix('?').unwrap_or(type_token);
+        // Handle `T|null` — split on `|` and check non-null parts.
+        // Collect ALL matching template params (not just the first) so
+        // that `@param array<TKey, TValue> $value` binds both TKey and
+        // TValue to `$value`.
+        for part in core.split('|').map(str::trim).filter(|p| *p != "null") {
+            // Direct match: `T`
+            if let Some(t) = template_params.iter().find(|t| t.as_str() == part) {
+                results.push((t.to_string(), param_name.to_string()));
                 continue;
             }
-
-            // Extract the full type token (respects `<…>` nesting).
-            let (type_token, remainder) = split_type_token(rest);
-
-            // The next token should be the parameter name (e.g. `$model`).
-            // It may have a variadic prefix: `...$items`.
-            let param_name = match remainder.split_whitespace().next() {
-                Some(name) if name.starts_with('$') => name,
-                Some(name) if name.starts_with("...$") => &name[3..],
-                _ => continue,
-            };
-
-            // Strip nullable prefix and `|null` suffix to get the core type.
-            let core = type_token.strip_prefix('?').unwrap_or(type_token);
-            // Handle `T|null` — split on `|` and check non-null parts.
-            // Collect ALL matching template params (not just the first) so
-            // that `@param array<TKey, TValue> $value` binds both TKey and
-            // TValue to `$value`.
-            for part in core.split('|').map(str::trim).filter(|p| *p != "null") {
-                // Direct match: `T`
-                if let Some(t) = template_params.iter().find(|t| t.as_str() == part) {
-                    results.push((t.to_string(), param_name.to_string()));
-                    continue;
-                }
-                // Array suffix: `T[]`
-                if let Some(base) = part.strip_suffix("[]")
-                    && let Some(t) = template_params.iter().find(|t| t.as_str() == base)
-                {
-                    results.push((t.to_string(), param_name.to_string()));
-                    continue;
-                }
-                // Generic wrapper: `Wrapper<T>`, `Wrapper<T, U>`,
-                // `array<TKey, TValue>` — bind every template param found.
-                if let Some(open) = part.find('<')
-                    && let Some(close) = part.rfind('>')
-                {
-                    let inner_str = &part[open + 1..close];
-                    for arg in inner_str.split(',') {
-                        let arg = arg.trim();
-                        if let Some(t) = template_params.iter().find(|t| t.as_str() == arg) {
-                            results.push((t.to_string(), param_name.to_string()));
-                        }
+            // Array suffix: `T[]`
+            if let Some(base) = part.strip_suffix("[]")
+                && let Some(t) = template_params.iter().find(|t| t.as_str() == base)
+            {
+                results.push((t.to_string(), param_name.to_string()));
+                continue;
+            }
+            // Generic wrapper: `Wrapper<T>`, `Wrapper<T, U>`,
+            // `array<TKey, TValue>` — bind every template param found.
+            if let Some(open) = part.find('<')
+                && let Some(close) = part.rfind('>')
+            {
+                let inner_str = &part[open + 1..close];
+                for arg in inner_str.split(',') {
+                    let arg = arg.trim();
+                    if let Some(t) = template_params.iter().find(|t| t.as_str() == arg) {
+                        results.push((t.to_string(), param_name.to_string()));
                     }
                 }
             }
@@ -222,76 +218,98 @@ pub fn extract_template_param_bindings(
 ///   - `@implements ArrayAccess<string, User>`
 ///   - Nested generics: `@extends Base<array<int, string>, User>`
 pub fn extract_generics_tag(docblock: &str, tag: &str) -> Vec<(String, Vec<String>)> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
 
-    // Build the tag variants we accept.  For `@extends` we also accept
-    // `@phpstan-extends` and `@template-extends` (PHPStan/Psalm aliases).
+    // Map the tag string to the corresponding TagKinds.
+    // For `@extends` we also accept `@phpstan-extends` and `@template-extends`.
+    // Note: `@phpstan-extends`, `@phpstan-implements`, and `@phpstan-use`
+    // are classified as `TagKind::Other` by mago-docblock, so we also
+    // need to match them by tag name.
     let bare_tag = tag.strip_prefix('@').unwrap_or(tag);
-    let phpstan_tag = format!("@phpstan-{bare_tag}");
-    let template_tag = format!("@template-{bare_tag}");
+    let (kinds, name_fallbacks): (Vec<TagKind>, Vec<&str>) = match bare_tag {
+        "extends" => (
+            vec![TagKind::Extends, TagKind::TemplateExtends],
+            vec!["phpstan-extends"],
+        ),
+        "implements" => (
+            vec![TagKind::Implements, TagKind::TemplateImplements],
+            vec!["phpstan-implements"],
+        ),
+        "use" => (
+            vec![TagKind::Use, TagKind::TemplateUse],
+            vec!["phpstan-use"],
+        ),
+        _ => (vec![], vec![bare_tag]),
+    };
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        let rest = if let Some(r) = trimmed.strip_prefix(&phpstan_tag) {
-            r
-        } else if let Some(r) = trimmed.strip_prefix(&template_tag) {
-            r
-        } else if let Some(r) = trimmed.strip_prefix(tag) {
-            r
-        } else {
-            continue;
-        };
-
-        // Must be followed by whitespace.
-        let rest = rest.trim_start();
-        if rest.is_empty() {
-            continue;
+    // Match by TagKind first.
+    for tag in info.tags_by_kinds(&kinds) {
+        if let Some(result) = parse_generics_from_description(&tag.description) {
+            results.push(result);
         }
+    }
 
-        // Extract the full type token (e.g. `Collection<int, Language>`),
-        // respecting `<…>` nesting.
-        let (type_token, _remainder) = split_type_token(rest);
-
-        // Split into base class name and generic arguments.
-        if let Some(angle_pos) = type_token.find('<') {
-            let base_name = type_token[..angle_pos].trim();
-            let base_name = base_name.strip_prefix('\\').unwrap_or(base_name);
-            if base_name.is_empty() {
-                continue;
-            }
-
-            // Extract the inner generic arguments (between `<` and `>`).
-            let inner_generics = &type_token[angle_pos + 1..];
-            let inner_generics = inner_generics
-                .strip_suffix('>')
-                .unwrap_or(inner_generics)
-                .trim();
-
-            if inner_generics.is_empty() {
-                continue;
-            }
-
-            // Split on commas respecting nesting.
-            let args: Vec<String> = split_generic_args(inner_generics)
-                .into_iter()
-                .map(|a| a.strip_prefix('\\').unwrap_or(a).to_string())
-                .collect();
-            if !args.is_empty() {
-                results.push((base_name.to_string(), args));
+    // Also match by tag name for variants that mago-docblock classifies
+    // as `TagKind::Other` (e.g. `@phpstan-extends`).
+    for tag in &info.tags {
+        if name_fallbacks.contains(&tag.name.as_str()) && tag.kind == TagKind::Other {
+            if let Some(result) = parse_generics_from_description(&tag.description) {
+                results.push(result);
             }
         }
-        // No `<…>` means no generic args — skip.
     }
 
     results
+}
+
+/// Parse a generics tag description (e.g. `"Collection<int, Language>"`) into
+/// a `(base_name, generic_args)` tuple.
+fn parse_generics_from_description(desc: &str) -> Option<(String, Vec<String>)> {
+    let desc = desc.trim();
+    if desc.is_empty() {
+        return None;
+    }
+
+    // mago-docblock joins multi-line descriptions with \n; normalise.
+    let normalised = desc.replace('\n', " ");
+
+    // Extract the full type token (e.g. `Collection<int, Language>`),
+    // respecting `<…>` nesting.
+    let (type_token, _remainder) = split_type_token(&normalised);
+
+    // Split into base class name and generic arguments.
+    let angle_pos = type_token.find('<')?;
+    let base_name = type_token[..angle_pos].trim();
+    let base_name = base_name.strip_prefix('\\').unwrap_or(base_name);
+    if base_name.is_empty() {
+        return None;
+    }
+
+    // Extract the inner generic arguments (between `<` and `>`).
+    let inner_generics = &type_token[angle_pos + 1..];
+    let inner_generics = inner_generics
+        .strip_suffix('>')
+        .unwrap_or(inner_generics)
+        .trim();
+
+    if inner_generics.is_empty() {
+        return None;
+    }
+
+    // Split on commas respecting nesting.
+    let args: Vec<String> = split_generic_args(inner_generics)
+        .into_iter()
+        .map(|a| a.strip_prefix('\\').unwrap_or(a).to_string())
+        .collect();
+    if args.is_empty() {
+        return None;
+    }
+
+    Some((base_name.to_string(), args))
 }
 
 // ─── Type Aliases ───────────────────────────────────────────────────────────
@@ -304,60 +322,49 @@ pub fn extract_generics_tag(docblock: &str, tag: &str) -> Vec<(String, Vec<Strin
 /// aliases the definition has the form `"from:ClassName:OriginalName"` so
 /// that the resolver can look up the alias in the source class.
 pub fn extract_type_aliases(docblock: &str) -> HashMap<String, String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return HashMap::new();
+    };
 
     let mut aliases = HashMap::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        // ── Local type alias: @phpstan-type / @psalm-type ──
-        if let Some(rest) = trimmed
-            .strip_prefix("@phpstan-type")
-            .or_else(|| trimmed.strip_prefix("@psalm-type"))
-        {
-            // Must not be `@phpstan-type-alias` or similar
-            if rest.starts_with('-') {
-                continue;
-            }
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                continue;
-            }
-
-            // Split into alias name and definition.
-            // Format: `AliasName = Definition` or `AliasName Definition`
-            if let Some((name, def)) = parse_local_type_alias(rest)
-                && !name.is_empty()
-                && !def.is_empty()
-            {
-                aliases.insert(name.to_string(), def.to_string());
-            }
+    // ── Local type alias: @phpstan-type / @psalm-type ──
+    for tag in info.tags_by_kinds(&[TagKind::PhpstanType, TagKind::PsalmType, TagKind::Type]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
             continue;
         }
 
-        // ── Imported type alias: @phpstan-import-type / @psalm-import-type ──
-        if let Some(rest) = trimmed
-            .strip_prefix("@phpstan-import-type")
-            .or_else(|| trimmed.strip_prefix("@psalm-import-type"))
-        {
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                continue;
-            }
+        // mago-docblock joins multi-line descriptions with \n; normalise.
+        let normalised = desc.replace('\n', " ");
 
-            // Format: `TypeName from ClassName` or `TypeName from ClassName as LocalAlias`
-            if let Some((alias_name, definition)) = parse_import_type_alias(rest)
-                && !alias_name.is_empty()
-                && !definition.is_empty()
-            {
-                aliases.insert(alias_name, definition);
-            }
+        // Split into alias name and definition.
+        // Format: `AliasName = Definition` or `AliasName Definition`
+        if let Some((name, def)) = parse_local_type_alias(&normalised)
+            && !name.is_empty()
+            && !def.is_empty()
+        {
+            aliases.insert(name.to_string(), def.to_string());
+        }
+    }
+
+    // ── Imported type alias: @phpstan-import-type / @psalm-import-type ──
+    for tag in info.tags_by_kinds(&[
+        TagKind::PhpstanImportType,
+        TagKind::PsalmImportType,
+        TagKind::ImportType,
+    ]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
+        }
+
+        // Format: `TypeName from ClassName` or `TypeName from ClassName as LocalAlias`
+        if let Some((alias_name, definition)) = parse_import_type_alias(desc)
+            && !alias_name.is_empty()
+            && !definition.is_empty()
+        {
+            aliases.insert(alias_name, definition);
         }
     }
 
@@ -500,60 +507,66 @@ pub fn synthesize_template_conditional(
 ///   - `?class-string<T>` (nullable)
 ///   - `class-string<T>|null` (union with null)
 fn find_class_string_param_name(docblock: &str, template_name: &str) -> Option<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let info = parse_docblock_for_tags(docblock)?;
 
     let pattern = format!("class-string<{}>", template_name);
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
+    for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
+        }
 
-        if let Some(rest) = trimmed.strip_prefix("@param") {
+        // Extract the full type token (respects `<…>` nesting).
+        let (type_token, remainder) = split_type_token(desc);
+
+        // Check if the type token contains `class-string<T>`.
+        // We strip `?` prefix and check for the pattern.
+        let check = type_token.strip_prefix('?').unwrap_or(type_token);
+        // Also handle `class-string<T>|null` — split on `|` and
+        // check each part.
+        let matches = check.split('|').any(|part| part.trim() == pattern);
+
+        if !matches {
+            continue;
+        }
+
+        // The next token after the type should be `$paramName`.
+        // However, `split_type_token` splits at the closing `>`,
+        // so if the type is `class-string<T>|null`, the remainder
+        // will be `|null $class`.  Skip any union continuation
+        // (`|part`) before looking for the `$` variable name.
+        let mut search = remainder;
+        while let Some(rest) = search.strip_prefix('|') {
+            // Skip `|unionPart` — the next whitespace-delimited
+            // token is the union type, not the variable name.
             let rest = rest.trim_start();
-            if rest.is_empty() {
-                continue;
-            }
-
-            // Extract the full type token (respects `<…>` nesting).
-            let (type_token, remainder) = split_type_token(rest);
-
-            // Check if the type token contains `class-string<T>`.
-            // We strip `?` prefix and check for the pattern.
-            let check = type_token.strip_prefix('?').unwrap_or(type_token);
-            // Also handle `class-string<T>|null` — split on `|` and
-            // check each part.
-            let matches = check.split('|').any(|part| part.trim() == pattern);
-
-            if !matches {
-                continue;
-            }
-
-            // The next token after the type should be `$paramName`.
-            // However, `split_type_token` splits at the closing `>`,
-            // so if the type is `class-string<T>|null`, the remainder
-            // will be `|null $class`.  Skip any union continuation
-            // (`|part`) before looking for the `$` variable name.
-            let mut search = remainder;
-            while let Some(rest) = search.strip_prefix('|') {
-                // Skip `|unionPart` — the next whitespace-delimited
-                // token is the union type, not the variable name.
-                let rest = rest.trim_start();
-                let (_, after) = split_type_token(rest);
-                search = after;
-            }
-            if let Some(var_name) = search.split_whitespace().next() {
-                // Handle both `$param` and variadic `...$param`.
-                let var_name = var_name.strip_prefix("...").unwrap_or(var_name);
-                if let Some(name) = var_name.strip_prefix('$') {
-                    return Some(name.to_string());
-                }
+            let (_, after) = split_type_token(rest);
+            search = after;
+        }
+        if let Some(var_name) = search.split_whitespace().next() {
+            // Handle both `$param` and variadic `...$param`.
+            let var_name = var_name.strip_prefix("...").unwrap_or(var_name);
+            if let Some(name) = var_name.strip_prefix('$') {
+                return Some(name.to_string());
             }
         }
     }
 
     None
+}
+
+// ─── Internal Helpers ───────────────────────────────────────────────────────
+
+/// Parse a docblock string into a [`DocblockInfo`] with a zero-offset span.
+fn parse_docblock_for_tags(docblock: &str) -> Option<super::parser::DocblockInfo> {
+    use mago_database::file::FileId;
+    use mago_span::Position;
+
+    let span = mago_span::Span::new(
+        FileId::zero(),
+        Position::new(0),
+        Position::new(docblock.len() as u32),
+    );
+    parse_docblock(docblock, span)
 }

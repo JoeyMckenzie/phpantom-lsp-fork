@@ -35,7 +35,7 @@ within the same impact tier.
 | #   | Item                                                        | Impact | Effort      |
 | --- | ----------------------------------------------------------- | ------ | ----------- |
 |     | Clear [refactoring gate](todo/refactor.md)                  | —      | —           |
-| M2  | [Migrate to mago-docblock](todo/mago.md#m2-mago-docblock)   | High   | Medium      |
+| M2  | ✅ [Migrate to mago-docblock](todo/mago.md#m2-mago-docblock) | High   | Medium      |
 | M3  | [Migrate to mago-names](todo/mago.md#m3-mago-names)         | High   | Medium-High |
 
 ## Sprint 4b — Mago foundation: Type Syntax

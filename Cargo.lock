@@ -1084,6 +1084,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mago-docblock"
+version = "1.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "073afe415acd17489c27e62d18ef61453ab305dccfd9d6124f113eb546499ab7"
+dependencies = [
+ "bumpalo",
+ "mago-span",
+ "mago-syntax",
+ "serde",
+]
+
+[[package]]
 name = "mago-formatter"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1343,6 +1355,7 @@ dependencies = [
  "ignore",
  "mago-composer",
  "mago-database",
+ "mago-docblock",
  "mago-formatter",
  "mago-php-version",
  "mago-span",

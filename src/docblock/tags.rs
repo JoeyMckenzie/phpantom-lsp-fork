@@ -17,11 +17,13 @@
 //! Virtual member tags (`@property`, `@method`) live in
 //! [`super::virtual_members`].
 
+use mago_docblock::document::TagKind;
 use mago_span::HasSpan;
 use mago_syntax::ast::*;
 
 use crate::types::{AssertionKind, PhpVersion, TypeAssertion};
 
+use super::parser::parse_docblock;
 use super::types::{
     base_class_name, clean_type, is_scalar, normalize_nullable, split_type_token, strip_nullable,
 };
@@ -40,7 +42,7 @@ use super::types::{
 /// Returns the cleaned type string (leading `\` stripped) or `None` if no
 /// `@return` tag is found.
 pub fn extract_return_type(docblock: &str) -> Option<String> {
-    extract_tag_type(docblock, "@return")
+    extract_type_via_mago(docblock, &[TagKind::PhpstanReturn, TagKind::Return])
 }
 
 /// Extract the deprecation message from a `@deprecated` PHPDoc tag.
@@ -54,27 +56,9 @@ pub fn extract_return_type(docblock: &str) -> Option<String> {
 /// Returns `Some("")` when the tag is present but has no message.
 /// Returns `Some("message")` when the tag includes explanatory text.
 pub fn extract_deprecation_message(docblock: &str) -> Option<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
-
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-        if trimmed == "@deprecated" {
-            return Some(String::new());
-        }
-        if let Some(rest) = trimmed.strip_prefix("@deprecated ") {
-            return Some(rest.trim().to_string());
-        }
-        if let Some(rest) = trimmed.strip_prefix("@deprecated\t") {
-            return Some(rest.trim().to_string());
-        }
-    }
-
-    None
+    let info = parse_docblock_for_tags(docblock)?;
+    let tag = info.first_tag_by_kind(TagKind::Deprecated)?;
+    Some(tag.description.trim().to_owned())
 }
 
 /// Check whether a PHPDoc block contains an `@deprecated` tag.
@@ -93,24 +77,15 @@ pub fn has_deprecated_tag(docblock: &str) -> bool {
 /// Returns `None` when no `@removed` tag is present or the version
 /// cannot be parsed.
 pub fn extract_removed_version(docblock: &str) -> Option<PhpVersion> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
-
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-        if let Some(rest) = trimmed.strip_prefix("@removed ") {
-            return PhpVersion::from_composer_constraint(rest.trim());
-        }
-        if let Some(rest) = trimmed.strip_prefix("@removed\t") {
-            return PhpVersion::from_composer_constraint(rest.trim());
-        }
+    let info = parse_docblock_for_tags(docblock)?;
+    // `@removed` is not a standard PHPDoc tag, so mago-docblock classifies
+    // it as `TagKind::Other`.  We match by name instead.
+    let tag = info.tags.iter().find(|t| t.name == "removed")?;
+    let desc = tag.description.trim();
+    if desc.is_empty() {
+        return None;
     }
-
-    None
+    PhpVersion::from_composer_constraint(desc)
 }
 
 /// Extract all `@see` references from a PHPDoc block.
@@ -128,31 +103,14 @@ pub fn extract_removed_version(docblock: &str) -> Option<PhpVersion> {
 /// This is used alongside [`extract_deprecation_message`] to enrich
 /// deprecated diagnostics with pointers to replacement APIs.
 pub fn extract_see_references(docblock: &str) -> Vec<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
 
-    let mut refs = Vec::new();
-
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-        if let Some(rest) = trimmed.strip_prefix("@see ") {
-            let rest = rest.trim();
-            if !rest.is_empty() {
-                refs.push(rest.to_string());
-            }
-        } else if let Some(rest) = trimmed.strip_prefix("@see\t") {
-            let rest = rest.trim();
-            if !rest.is_empty() {
-                refs.push(rest.to_string());
-            }
-        }
-    }
-
-    refs
+    info.tags_by_kind(TagKind::See)
+        .map(|tag| tag.description.trim().to_owned())
+        .filter(|desc| !desc.is_empty())
+        .collect()
 }
 
 /// Extract the deprecation message from a `@deprecated` PHPDoc tag,
@@ -201,33 +159,21 @@ pub fn extract_deprecation_with_see(docblock: &str) -> Option<String> {
 /// class name has its leading `\` and generic parameters stripped.  The
 /// `generic_args` vector is empty when the tag has no `<…>` suffix.
 pub fn extract_mixin_tags(docblock: &str) -> Vec<(String, Vec<String>)> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        let rest = if let Some(r) = trimmed.strip_prefix("@mixin") {
-            r
-        } else {
-            continue;
-        };
-
-        // The tag must be followed by whitespace.
-        let rest = rest.trim_start();
-        if rest.is_empty() {
+    for tag in info.tags_by_kind(TagKind::Mixin) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
             continue;
         }
 
         // Extract the full type token (respects `<…>` nesting so that
         // generics like `Builder<TRelatedModel>` are treated as one unit).
-        let (type_token, _remainder) = split_type_token(rest);
+        let (type_token, _remainder) = split_type_token(desc);
 
         // Split into base class name and optional generic arguments.
         let (base, generic_args) = if let Some(angle_pos) = type_token.find('<') {
@@ -269,32 +215,20 @@ pub fn extract_mixin_tags(docblock: &str) -> Vec<(String, Vec<String>)> {
 ///
 /// Returns a list of cleaned type name strings (leading `\` stripped).
 pub fn extract_throws_tags(docblock: &str) -> Vec<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        let rest = if let Some(r) = trimmed.strip_prefix("@throws") {
-            r
-        } else {
-            continue;
-        };
-
-        // The tag must be followed by whitespace.
-        let rest = rest.trim_start();
-        if rest.is_empty() {
+    for tag in info.tags_by_kind(TagKind::Throws) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
             continue;
         }
 
         // The type name is the first whitespace-delimited token.
-        let type_name = match rest.split_whitespace().next() {
+        let type_name = match desc.split_whitespace().next() {
             Some(name) => name,
             None => continue,
         };
@@ -321,66 +255,68 @@ pub fn extract_throws_tags(docblock: &str) -> Vec<String> {
 /// Returns a list of parsed assertions.  An empty list means no
 /// assertion tags were found.
 pub fn extract_type_assertions(docblock: &str) -> Vec<TypeAssertion> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
+
+    /// Map a `TagKind` to the corresponding `AssertionKind`.
+    const fn assertion_kind_for(kind: TagKind) -> AssertionKind {
+        match kind {
+            TagKind::PhpstanAssertIfTrue | TagKind::PsalmAssertIfTrue | TagKind::AssertIfTrue => {
+                AssertionKind::IfTrue
+            }
+            TagKind::PhpstanAssertIfFalse
+            | TagKind::PsalmAssertIfFalse
+            | TagKind::AssertIfFalse => AssertionKind::IfFalse,
+            // TagKind::Assert, PhpstanAssert, PsalmAssert, and anything else
+            _ => AssertionKind::Always,
+        }
+    }
+
+    const ASSERT_KINDS: &[TagKind] = &[
+        TagKind::PhpstanAssertIfTrue,
+        TagKind::PhpstanAssertIfFalse,
+        TagKind::PhpstanAssert,
+        TagKind::PsalmAssertIfTrue,
+        TagKind::PsalmAssertIfFalse,
+        TagKind::PsalmAssert,
+        TagKind::AssertIfTrue,
+        TagKind::AssertIfFalse,
+        TagKind::Assert,
+    ];
 
     let mut results = Vec::new();
 
-    // The tags we recognise, longest-first so that `-if-true` / `-if-false`
-    // are matched before the bare `@phpstan-assert`.
-    const TAGS: &[(&str, AssertionKind)] = &[
-        ("@phpstan-assert-if-true", AssertionKind::IfTrue),
-        ("@phpstan-assert-if-false", AssertionKind::IfFalse),
-        ("@phpstan-assert", AssertionKind::Always),
-        ("@psalm-assert-if-true", AssertionKind::IfTrue),
-        ("@psalm-assert-if-false", AssertionKind::IfFalse),
-        ("@psalm-assert", AssertionKind::Always),
-    ];
-
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        for &(tag, kind) in TAGS {
-            if let Some(rest) = trimmed.strip_prefix(tag) {
-                // The tag must be followed by whitespace.
-                let rest = rest.trim_start();
-                if rest.is_empty() {
-                    break;
-                }
-
-                // Check for negation: `!Type $param`
-                let (negated, rest) = if let Some(r) = rest.strip_prefix('!') {
-                    (true, r.trim_start())
-                } else {
-                    (false, rest)
-                };
-
-                // Next token is the type, then the parameter name.
-                let mut tokens = rest.split_whitespace();
-                let type_str = match tokens.next() {
-                    Some(t) => t,
-                    None => break,
-                };
-                let param_str = match tokens.next() {
-                    Some(p) if p.starts_with('$') => p,
-                    _ => break,
-                };
-
-                results.push(TypeAssertion {
-                    kind,
-                    param_name: param_str.to_string(),
-                    asserted_type: clean_type(type_str),
-                    negated,
-                });
-
-                // Matched a tag — don't try shorter prefixes for this line.
-                break;
-            }
+    for tag in info.tags_by_kinds(ASSERT_KINDS) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
         }
+
+        // Check for negation: `!Type $param`
+        let (negated, rest) = if let Some(r) = desc.strip_prefix('!') {
+            (true, r.trim_start())
+        } else {
+            (false, desc)
+        };
+
+        // Next token is the type, then the parameter name.
+        let mut tokens = rest.split_whitespace();
+        let type_str = match tokens.next() {
+            Some(t) => t,
+            None => continue,
+        };
+        let param_str = match tokens.next() {
+            Some(p) if p.starts_with('$') => p,
+            _ => continue,
+        };
+
+        results.push(TypeAssertion {
+            kind: assertion_kind_for(tag.kind),
+            param_name: param_str.to_string(),
+            asserted_type: clean_type(type_str),
+            negated,
+        });
     }
 
     results
@@ -392,7 +328,7 @@ pub fn extract_type_assertions(docblock: &str) -> Vec<TypeAssertion> {
 ///   - `/** @var Session */`
 ///   - `/** @var \App\Models\User */`
 pub fn extract_var_type(docblock: &str) -> Option<String> {
-    extract_tag_type(docblock, "@var")
+    extract_type_via_mago(docblock, &[TagKind::PhpstanVar, TagKind::Var])
 }
 
 /// Extract the type and optional variable name from a `@var` PHPDoc tag.
@@ -404,39 +340,30 @@ pub fn extract_var_type(docblock: &str) -> Option<String> {
 /// The variable name (if present) is returned **with** the `$` prefix so
 /// callers can compare directly against AST variable names.
 pub fn extract_var_type_with_name(docblock: &str) -> Option<(String, Option<String>)> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let info = parse_docblock_for_tags(docblock)?;
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        if let Some(rest) = trimmed.strip_prefix("@var") {
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                continue;
-            }
-
-            // Extract the type token, respecting `<…>` nesting so that
-            // generics like `Collection<int, User>` are treated as one unit.
-            let (type_str, remainder) = split_type_token(rest);
-            let cleaned_type = clean_type(type_str);
-            if cleaned_type.is_empty() {
-                return None;
-            }
-
-            // Check for an optional `$variable` name after the type.
-            let var_name = remainder
-                .split_whitespace()
-                .next()
-                .filter(|t| t.starts_with('$'))
-                .map(|t| t.to_string());
-
-            return Some((cleaned_type, var_name));
+    for tag in info.tags_by_kinds(&[TagKind::PhpstanVar, TagKind::Var]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
         }
+
+        // Extract the type token, respecting `<…>` nesting so that
+        // generics like `Collection<int, User>` are treated as one unit.
+        let (type_str, remainder) = split_type_token(desc);
+        let cleaned_type = clean_type(type_str);
+        if cleaned_type.is_empty() {
+            return None;
+        }
+
+        // Check for an optional `$variable` name after the type.
+        let var_name = remainder
+            .split_whitespace()
+            .next()
+            .filter(|t| t.starts_with('$'))
+            .map(|t| t.to_string());
+
+        return Some((cleaned_type, var_name));
     }
     None
 }
@@ -584,32 +511,23 @@ pub fn find_var_raw_type_in_source(
 ///   docblock containing `@param list<User> $users` with var_name `"$users"`
 ///   → `Some("list<User>")`
 pub fn extract_param_raw_type(docblock: &str, var_name: &str) -> Option<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let info = parse_docblock_for_tags(docblock)?;
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
+    for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
+        }
 
-        if let Some(rest) = trimmed.strip_prefix("@param") {
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                continue;
-            }
+        // Extract the full type token (respects `<…>` nesting).
+        let (type_token, remainder) = split_type_token(desc);
 
-            // Extract the full type token (respects `<…>` nesting).
-            let (type_token, remainder) = split_type_token(rest);
-
-            // The next token should be the parameter name.
-            // Handle `...$name` (variadic) by stripping the leading `...`.
-            if let Some(name) = remainder.split_whitespace().next() {
-                let name = name.strip_prefix("...").unwrap_or(name);
-                if name == var_name {
-                    return Some(type_token.to_string());
-                }
+        // The next token should be the parameter name.
+        // Handle `...$name` (variadic) by stripping the leading `...`.
+        if let Some(name) = remainder.split_whitespace().next() {
+            let name = name.strip_prefix("...").unwrap_or(name);
+            if name == var_name {
+                return Some(type_token.to_string());
             }
         }
     }
@@ -627,38 +545,29 @@ pub fn extract_param_raw_type(docblock: &str, var_name: &str) -> Option<String> 
 /// not present in the native function signature (e.g. parameters accessed
 /// via `func_get_args()`).
 pub fn extract_all_param_tags(docblock: &str) -> Vec<(String, String)> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
+    // Only match `@param` and `@phpstan-param`, not compound tags like
+    // `@param-closure-this` (those have their own TagKind).
+    for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
+        }
 
-        if let Some(rest) = trimmed.strip_prefix("@param") {
-            // Skip @param-closure-this and similar compound tags.
-            if rest.starts_with('-') {
-                continue;
-            }
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                continue;
-            }
+        // Extract the full type token (respects `<…>` nesting).
+        let (type_token, remainder) = split_type_token(desc);
 
-            // Extract the full type token (respects `<…>` nesting).
-            let (type_token, remainder) = split_type_token(rest);
-
-            // The next token should be the parameter name.
-            // Handle `...$name` (variadic) by stripping the leading `...`.
-            if let Some(name) = remainder.split_whitespace().next() {
-                let name = name.strip_prefix("...").unwrap_or(name);
-                if name.starts_with('$') {
-                    results.push((name.to_string(), type_token.to_string()));
-                }
+        // The next token should be the parameter name.
+        // Handle `...$name` (variadic) by stripping the leading `...`.
+        if let Some(name) = remainder.split_whitespace().next() {
+            let name = name.strip_prefix("...").unwrap_or(name);
+            if name.starts_with('$') {
+                results.push((name.to_string(), type_token.to_string()));
             }
         }
     }
@@ -678,36 +587,29 @@ pub fn extract_all_param_tags(docblock: &str) -> Vec<(String, String)> {
 /// includes the `$` prefix.  The `type_name` is the raw type string
 /// (e.g. `\Illuminate\Routing\Route`, `$this`, `static`).
 pub fn extract_param_closure_this(docblock: &str) -> Vec<(String, String)> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
+    for tag in info.tags_by_kind(TagKind::ParamClosureThis) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
+        }
 
-        if let Some(rest) = trimmed.strip_prefix("@param-closure-this") {
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                continue;
-            }
+        // Extract the type token (respects `<…>` nesting).
+        let (type_token, remainder) = split_type_token(desc);
+        if type_token.is_empty() {
+            continue;
+        }
 
-            // Extract the type token (respects `<…>` nesting).
-            let (type_token, remainder) = split_type_token(rest);
-            if type_token.is_empty() {
-                continue;
-            }
-
-            // The next token should be the parameter name (`$paramName`).
-            if let Some(name) = remainder.split_whitespace().next()
-                && name.starts_with('$')
-            {
-                results.push((type_token.to_string(), name.to_string()));
-            }
+        // The next token should be the parameter name (`$paramName`).
+        if let Some(name) = remainder.split_whitespace().next()
+            && name.starts_with('$')
+        {
+            results.push((type_token.to_string(), name.to_string()));
         }
     }
 
@@ -727,64 +629,39 @@ pub fn extract_param_closure_this(docblock: &str) -> Vec<(String, String)> {
 ///   `@param callable|null $callback Callback function to run for each element.`
 ///   with var_name `"$callback"` → `Some("Callback function to run for each element.")`
 pub fn extract_param_description(docblock: &str, var_name: &str) -> Option<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let info = parse_docblock_for_tags(docblock)?;
 
-    let lines: Vec<&str> = inner.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim().trim_start_matches('*').trim();
-
-        if let Some(rest) = trimmed.strip_prefix("@param") {
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                i += 1;
-                continue;
-            }
-
-            // Skip the type token.
-            let (_type_token, remainder) = split_type_token(rest);
-            let remainder = remainder.trim_start();
-
-            // Check if the next token is our parameter name.
-            // Handle `...$name` (variadic) by stripping the leading `...`.
-            let name_token = remainder.split_whitespace().next().unwrap_or("");
-            let name_stripped = name_token.strip_prefix("...").unwrap_or(name_token);
-            if name_stripped != var_name {
-                i += 1;
-                continue;
-            }
-
-            // Skip past the parameter name to get the description.
-            let after_name = remainder.get(name_token.len()..).unwrap_or("").trim_start();
-
-            let mut desc_parts: Vec<String> = Vec::new();
-            if !after_name.is_empty() {
-                desc_parts.push(strip_html_tags(after_name));
-            }
-
-            // Collect continuation lines (until next `@tag` or empty trimmed line).
-            let mut j = i + 1;
-            while j < lines.len() {
-                let cont = lines[j].trim().trim_start_matches('*').trim();
-                if cont.is_empty() || cont.starts_with('@') {
-                    break;
-                }
-                desc_parts.push(strip_html_tags(cont));
-                j += 1;
-            }
-
-            let desc = desc_parts.join(" ").trim().to_string();
-            if desc.is_empty() {
-                return None;
-            }
-            return Some(desc);
+    for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
         }
-        i += 1;
+
+        // Skip the type token.
+        let (_type_token, remainder) = split_type_token(desc);
+        let remainder = remainder.trim_start();
+
+        // Check if the next token is our parameter name.
+        // Handle `...$name` (variadic) by stripping the leading `...`.
+        let name_token = remainder.split_whitespace().next().unwrap_or("");
+        let name_stripped = name_token.strip_prefix("...").unwrap_or(name_token);
+        if name_stripped != var_name {
+            continue;
+        }
+
+        // Skip past the parameter name to get the description.
+        let after_name = remainder.get(name_token.len()..).unwrap_or("").trim_start();
+
+        // mago-docblock joins multi-line tag descriptions with `\n`.
+        // The old code joined continuation lines with spaces, so
+        // normalise newlines to spaces to preserve existing behaviour.
+        let normalised = after_name.replace('\n', " ");
+        let cleaned = strip_html_tags(&normalised);
+        let desc = cleaned.trim().to_string();
+        if desc.is_empty() {
+            return None;
+        }
+        return Some(desc);
     }
 
     None
@@ -802,57 +679,33 @@ pub fn extract_param_description(docblock: &str, var_name: &str) -> Option<Strin
 ///   `@return array an array containing all the elements`
 ///   → `Some("an array containing all the elements")`
 pub fn extract_return_description(docblock: &str) -> Option<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let info = parse_docblock_for_tags(docblock)?;
 
-    let lines: Vec<&str> = inner.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim().trim_start_matches('*').trim();
-
-        if let Some(rest) = trimmed.strip_prefix("@return") {
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                i += 1;
-                continue;
-            }
-
-            // Skip PHPStan conditional return types.
-            if rest.starts_with('(') {
-                return None;
-            }
-
-            // Skip the type token.
-            let (_type_token, remainder) = split_type_token(rest);
-            let remainder = remainder.trim_start();
-
-            let mut desc_parts: Vec<String> = Vec::new();
-            if !remainder.is_empty() {
-                desc_parts.push(strip_html_tags(remainder));
-            }
-
-            // Collect continuation lines.
-            let mut j = i + 1;
-            while j < lines.len() {
-                let cont = lines[j].trim().trim_start_matches('*').trim();
-                if cont.is_empty() || cont.starts_with('@') {
-                    break;
-                }
-                desc_parts.push(strip_html_tags(cont));
-                j += 1;
-            }
-
-            let desc = desc_parts.join(" ").trim().to_string();
-            if desc.is_empty() {
-                return None;
-            }
-            return Some(desc);
+    for tag in info.tags_by_kinds(&[TagKind::PhpstanReturn, TagKind::Return]) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
+            continue;
         }
-        i += 1;
+
+        // Skip PHPStan conditional return types.
+        if desc.starts_with('(') {
+            return None;
+        }
+
+        // Skip the type token.
+        let (_type_token, remainder) = split_type_token(desc);
+        let remainder = remainder.trim_start();
+
+        // mago-docblock joins multi-line tag descriptions with `\n`.
+        // The old code joined continuation lines with spaces, so
+        // normalise newlines to spaces to preserve existing behaviour.
+        let normalised = remainder.replace('\n', " ");
+        let cleaned = strip_html_tags(&normalised);
+        let result = cleaned.trim().to_string();
+        if result.is_empty() {
+            return None;
+        }
+        return Some(result);
     }
 
     None
@@ -864,26 +717,19 @@ pub fn extract_return_description(docblock: &str) -> Option<String> {
 ///   `@link https://php.net/manual/en/function.array-map.php`
 ///   → `Some("https://php.net/manual/en/function.array-map.php")`
 pub fn extract_link_urls(docblock: &str) -> Vec<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
 
     let mut urls = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        if let Some(rest) = trimmed.strip_prefix("@link") {
-            let rest = rest.trim_start();
-            // Take the first whitespace-delimited token as the URL.
-            if let Some(url) = rest.split_whitespace().next()
-                && !url.is_empty()
-            {
-                urls.push(url.to_string());
-            }
+    for tag in info.tags_by_kind(TagKind::Link) {
+        let desc = tag.description.trim();
+        // Take the first whitespace-delimited token as the URL.
+        if let Some(url) = desc.split_whitespace().next()
+            && !url.is_empty()
+        {
+            urls.push(url.to_string());
         }
     }
 
@@ -1525,124 +1371,67 @@ fn count_braces_on_line(line: &str) -> (i32, i32) {
 ///
 /// **Skips** PHPStan conditional return types (those starting with `(`).
 /// Use [`super::extract_conditional_return_type`] for those.
-fn extract_tag_type(docblock: &str, tag: &str) -> Option<String> {
-    // Strip the `/**` opening and `*/` closing delimiters so that we only
-    // deal with the inner content.  This handles both single-line
-    // (`/** @return Foo */`) and multi-line docblocks.
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+/// Shared implementation for tag-type extraction via the mago-docblock parser.
+///
+/// Searches the parsed docblock for the first tag matching any of the given
+/// `kinds` (tried in order, so vendor-prefixed kinds like `PhpstanReturn`
+/// should come before the generic `Return` to give them priority).
+///
+/// The tag's `description` field already contains the joined, multi-line
+/// content after the tag name.  We extract the type portion using
+/// `split_type_token` and clean it with `clean_type`.
+///
+/// Skips PHPStan conditional return types (descriptions starting with `(`).
+fn extract_type_via_mago(docblock: &str, kinds: &[TagKind]) -> Option<String> {
+    let info = parse_docblock_for_tags(docblock)?;
 
-    let lines: Vec<&str> = inner.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        // Strip leading whitespace and the `*` gutter common in docblocks.
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        if let Some(rest) = trimmed.strip_prefix(tag) {
-            // The tag must be followed by whitespace (or be exactly `@tag`
-            // at end-of-line, which is invalid and we skip).
-            let rest = rest.trim_start();
-            if rest.is_empty() {
-                i += 1;
+    // Try each kind in priority order; return on the first match.
+    for &kind in kinds {
+        for tag in info.tags_by_kind(kind) {
+            let desc = tag.description.trim();
+            if desc.is_empty() {
                 continue;
             }
 
             // PHPStan conditional return types start with `(` — skip them
             // here; they are handled by `extract_conditional_return_type`.
-            if rest.starts_with('(') {
+            if desc.starts_with('(') {
                 return None;
             }
 
-            // Extract the type token, respecting `<…>` nesting so that
-            // generics like `Collection<int, User>` are treated as one unit.
-            //
-            // When the type spans multiple docblock lines (e.g.
-            // `@return static<\n *   int,\n *   string\n * >`), the
-            // single-line `split_type_token` will hit end-of-line with
-            // unclosed brackets.  In that case, collect continuation
-            // lines until brackets are balanced, then re-parse.
-            let (type_str, _remainder) = split_type_token(rest);
-            let needs_continuation = has_unclosed_brackets(type_str);
-
-            if !needs_continuation {
-                return Some(clean_type(type_str));
-            }
-
-            // ── Multi-line type: join continuation lines ────────
-            let mut joined = rest.to_string();
-            let mut j = i + 1;
-            while j < lines.len() {
-                let cont = lines[j].trim().trim_start_matches('*').trim();
-                // Stop if we hit another tag or an empty line.
-                if cont.starts_with('@') {
-                    break;
-                }
-                joined.push(' ');
-                joined.push_str(cont);
-                // Check whether brackets are now balanced.
-                if !has_unclosed_brackets(&joined) {
-                    break;
-                }
-                j += 1;
-            }
-
-            let joined = normalize_bracket_whitespace(&joined);
-            let (type_str, _) = split_type_token(&joined);
-            let type_str = if has_unclosed_brackets(type_str) {
-                // Brackets still unclosed — partially recover by
-                // stripping the unclosed generic/brace suffix to get
-                // the base type (e.g. `static<…broken` → `static`).
-                recover_base_type(type_str)
-            } else {
-                type_str
-            };
-
+            // mago-docblock joins multi-line tag descriptions with `\n`.
+            // Normalise newlines to spaces so that `split_type_token` and
+            // `clean_type` see the same single-line input the old code
+            // produced after joining continuation lines.
+            let normalised = desc.replace('\n', " ");
+            let (type_str, _remainder) = split_type_token(&normalised);
             if type_str.is_empty() {
-                return None;
+                continue;
             }
+
             return Some(clean_type(type_str));
         }
-        i += 1;
     }
+
     None
 }
 
-/// Collapse whitespace immediately after `<` or `{` and immediately
-/// before `>` or `}` so that multi-line joined types like
-/// `array< string, int >` become `array<string, int>`.
-fn normalize_bracket_whitespace(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-    while i < len {
-        let c = chars[i];
-        out.push(c);
-        // After `<` or `{`, skip whitespace.
-        if (c == '<' || c == '{') && i + 1 < len {
-            let mut j = i + 1;
-            while j < len && chars[j].is_whitespace() {
-                j += 1;
-            }
-            i = j;
-            continue;
-        }
-        // Before `>` or `}`, trim trailing whitespace already in `out`.
-        if (c == '>' || c == '}') && !out.is_empty() {
-            // We already pushed c — remove it, trim trailing ws, re-push.
-            out.pop();
-            let trimmed_len = out.trim_end().len();
-            out.truncate(trimmed_len);
-            out.push(c);
-        }
-        i += 1;
-    }
-    out
+/// Parse a docblock string into a [`DocblockInfo`] with a zero-offset span.
+///
+/// This is the standard entry point for all tag extraction functions that
+/// receive a raw `&str` docblock.  The span is set to cover the entire
+/// string starting at offset 0, which is correct for standalone extraction
+/// (the spans are only meaningful when the caller needs source positions).
+fn parse_docblock_for_tags(docblock: &str) -> Option<super::parser::DocblockInfo> {
+    use mago_database::file::FileId;
+    use mago_span::Position;
+
+    let span = mago_span::Span::new(
+        FileId::zero(),
+        Position::new(0),
+        Position::new(docblock.len() as u32),
+    );
+    parse_docblock(docblock, span)
 }
 
 /// Check whether a type string has unclosed `<…>` or `{…}` brackets.

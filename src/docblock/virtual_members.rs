@@ -9,6 +9,9 @@
 
 use std::collections::HashMap;
 
+use mago_docblock::document::TagKind;
+
+use super::parser::parse_docblock;
 use super::types::{clean_type, split_type_token};
 use crate::types::{MethodInfo, ParameterInfo, Visibility};
 
@@ -28,45 +31,31 @@ use crate::types::{MethodInfo, ParameterInfo, Visibility};
 /// Returns a list of `(property_name, cleaned_type)` pairs.  The property
 /// name does **not** include the `$` prefix.
 pub fn extract_property_tags(docblock: &str) -> Vec<(String, String)> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
+
+    const PROPERTY_KINDS: &[TagKind] = &[
+        TagKind::Property,
+        TagKind::PropertyRead,
+        TagKind::PropertyWrite,
+        TagKind::PsalmProperty,
+        TagKind::PsalmPropertyRead,
+        TagKind::PsalmPropertyWrite,
+    ];
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        // Match @property, @property-read, and @property-write
-        let rest = if let Some(r) = trimmed.strip_prefix("@property-read") {
-            r
-        } else if let Some(r) = trimmed.strip_prefix("@property-write") {
-            r
-        } else if let Some(r) = trimmed.strip_prefix("@property") {
-            r
-        } else {
-            continue;
-        };
-
-        // The tag must be followed by whitespace.
-        let rest = rest.trim_start();
-        if rest.is_empty() {
+    for tag in info.tags_by_kinds(PROPERTY_KINDS) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
             continue;
         }
 
-        // The type may be a compound like `null|int`, `?Foo`, or a generic
-        // like `Collection<int, Model>` that spans multiple whitespace-
-        // delimited tokens.  We use `split_type_token` to extract the full
-        // type (respecting `<…>` nesting) and then scan the remainder for
-        // the `$name`.
-        //
         // Format: @property Type $name  (or)  @property $name
-        if rest.starts_with('$') {
+        if desc.starts_with('$') {
             // No explicit type: `@property $name`
-            let prop_name = rest.split_whitespace().next().unwrap_or(rest);
+            let prop_name = desc.split_whitespace().next().unwrap_or(desc);
             let name = prop_name.strip_prefix('$').unwrap_or(prop_name);
             if name.is_empty() {
                 continue;
@@ -77,7 +66,7 @@ pub fn extract_property_tags(docblock: &str) -> Vec<(String, String)> {
 
         // Extract the type token, respecting `<…>` nesting so that
         // generics like `Collection<int, Model>` are treated as one unit.
-        let (type_token, remainder) = split_type_token(rest);
+        let (type_token, remainder) = split_type_token(desc);
 
         // Find the `$name` in the remainder.
         let prop_name = match remainder.split_whitespace().find(|t| t.starts_with('$')) {
@@ -111,28 +100,23 @@ pub fn extract_property_tags(docblock: &str) -> Vec<(String, String)> {
 /// Returns a list of `MethodInfo` structs.  Parameters are parsed with
 /// type hints and default-value detection where possible.
 pub fn extract_method_tags(docblock: &str) -> Vec<MethodInfo> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+    let Some(info) = parse_docblock_for_tags(docblock) else {
+        return Vec::new();
+    };
+
+    const METHOD_KINDS: &[TagKind] = &[TagKind::Method, TagKind::PsalmMethod];
 
     let mut results = Vec::new();
 
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        let rest = match trimmed.strip_prefix("@method") {
-            Some(r) => r,
-            None => continue,
-        };
-
-        // The tag must be followed by whitespace.
-        let rest = rest.trim_start();
-        if rest.is_empty() {
+    for tag in info.tags_by_kinds(METHOD_KINDS) {
+        let desc = tag.description.trim();
+        if desc.is_empty() {
             continue;
         }
+
+        // mago-docblock joins multi-line descriptions with \n; normalise.
+        let desc = desc.replace('\n', " ");
+        let rest = desc.as_str();
 
         // Check for optional `static` keyword.
         let (is_static, rest) = if let Some(after_static) = rest.strip_prefix("static") {
@@ -329,4 +313,19 @@ fn split_params(s: &str) -> Vec<&str> {
     // Push the last segment.
     parts.push(&s[start..]);
     parts
+}
+
+// ─── Internal Helpers ───────────────────────────────────────────────────────
+
+/// Parse a docblock string into a [`DocblockInfo`] with a zero-offset span.
+fn parse_docblock_for_tags(docblock: &str) -> Option<super::parser::DocblockInfo> {
+    use mago_database::file::FileId;
+    use mago_span::Position;
+
+    let span = mago_span::Span::new(
+        FileId::zero(),
+        Position::new(0),
+        Position::new(docblock.len() as u32),
+    );
+    parse_docblock(docblock, span)
 }

@@ -23,6 +23,7 @@
 //!     Generator TSend/TValue extraction
 
 mod conditional;
+pub(crate) mod parser;
 mod tags;
 mod templates;
 pub(crate) mod types;
