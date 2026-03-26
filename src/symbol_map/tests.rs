@@ -2605,13 +2605,11 @@ fn constant_access_produces_constant_reference() {
 }
 
 #[test]
-fn namespaced_constant_access_produces_class_reference() {
-    // A namespaced constant access like `\App\SOME_CONST` should be treated
-    // as a ClassReference since it could be a class name.
+fn static_class_constant_access_produces_class_reference() {
+    // `\App\MyClass::FOO` — the class part should be a ClassReference.
     let php = "<?php\nfunction t() { echo \\App\\MyClass::FOO; }\n";
     let map = parse_and_extract(php);
 
-    // `\App\MyClass` is the class part, which should be a ClassReference.
     let class_offset = php.find("\\App\\MyClass").unwrap() as u32;
     let hit = map.lookup(class_offset);
     assert!(hit.is_some(), "Should find \\App\\MyClass");
@@ -2621,6 +2619,30 @@ fn namespaced_constant_access_produces_class_reference() {
     } else {
         panic!(
             "Expected ClassReference for App\\MyClass, got {:?}",
+            hit.unwrap().kind
+        );
+    }
+}
+
+#[test]
+fn namespaced_standalone_constant_produces_constant_reference() {
+    // A standalone namespaced constant like `PHPStan\PHP_VERSION_ID` is a
+    // ConstantAccess in the parser — it must NOT be emitted as a
+    // ClassReference, which would cause false "unknown class" diagnostics.
+    let php = "<?php\nfunction t() { echo \\PHPStan\\PHP_VERSION_ID; }\n";
+    let map = parse_and_extract(php);
+
+    let const_offset = php.find("\\PHPStan\\PHP_VERSION_ID").unwrap() as u32;
+    let hit = map.lookup(const_offset);
+    assert!(
+        hit.is_some(),
+        "Should find \\PHPStan\\PHP_VERSION_ID as ConstantReference"
+    );
+    if let SymbolKind::ConstantReference { ref name } = hit.unwrap().kind {
+        assert_eq!(name, "PHPStan\\PHP_VERSION_ID");
+    } else {
+        panic!(
+            "Expected ConstantReference for PHPStan\\PHP_VERSION_ID, got {:?}",
             hit.unwrap().kind
         );
     }

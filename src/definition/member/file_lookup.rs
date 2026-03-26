@@ -123,7 +123,10 @@ impl Backend {
             // stub_index instead.  The URI suffix is the exact stub key
             // (which may be a FQN like `BcMath\Number` for namespaced
             // stubs, not just the short name).
-            self.stub_index.get(stub_key).map(|s| s.to_string())?
+            {
+                let stub_idx = self.stub_index.read();
+                stub_idx.get(stub_key).map(|s| s.to_string())?
+            }
         } else {
             self.get_file_content(&uri)?
         };

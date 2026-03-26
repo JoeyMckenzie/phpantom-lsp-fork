@@ -1999,29 +1999,18 @@ fn extract_from_expression<'a>(
         }
 
         // ── Standalone constant access ──
-        // `PHP_EOL`, `SORT_ASC`, etc.
+        // `PHP_EOL`, `SORT_ASC`, `PHPStan\PHP_VERSION_ID`, etc.
+        // The parser produces `ConstantAccess` for all standalone
+        // constant references — including namespaced ones.  These are
+        // never class names, so always emit `ConstantReference`.
         Expression::ConstantAccess(ca) => {
             let name = ca.name.value().to_string();
             let name_clean = name.strip_prefix('\\').unwrap_or(&name).to_string();
-            // Only emit for names that look like class references (uppercase
-            // start, contains backslash) since most standalone constants
-            // like `PHP_EOL` aren't navigable.  We also check
-            // `is_navigable_type` to filter out scalars.
-            if name.contains('\\') && is_navigable_type(&name_clean) {
-                ctx.spans.push(class_ref_span(
-                    ca.name.span().start.offset,
-                    ca.name.span().end.offset,
-                    &name,
-                ));
-            } else {
-                // For non-namespaced constants, emit a ConstantReference
-                // so GTD can resolve `define()`-d constants.
-                ctx.spans.push(SymbolSpan {
-                    start: ca.name.span().start.offset,
-                    end: ca.name.span().end.offset,
-                    kind: SymbolKind::ConstantReference { name: name_clean },
-                });
-            }
+            ctx.spans.push(SymbolSpan {
+                start: ca.name.span().start.offset,
+                end: ca.name.span().end.offset,
+                kind: SymbolKind::ConstantReference { name: name_clean },
+            });
         }
 
         // ── Pipe operator (PHP 8.5) ──

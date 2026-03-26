@@ -306,7 +306,8 @@ impl Backend {
         }
 
         // ── 3. Built-in PHP functions from stubs ────────────────────
-        for &name in self.stub_function_index.keys() {
+        let stub_fn_idx = self.stub_function_index.read();
+        for &name in stub_fn_idx.keys() {
             if !name.to_lowercase().contains(&prefix_lower) {
                 continue;
             }

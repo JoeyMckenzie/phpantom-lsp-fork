@@ -805,7 +805,8 @@ impl Backend {
 
         // ── 3. Stubs — names ending with "Exception" ────────────────
         // ── 5. Stubs — names NOT ending with "Exception" ────────────
-        for &name in self.stub_index.keys() {
+        let stub_idx = self.stub_index.read();
+        for &name in stub_idx.keys() {
             if loaded_fqns.contains(name) {
                 continue;
             }
@@ -822,6 +823,7 @@ impl Backend {
             if !seen_fqns.insert(name.to_string()) {
                 continue;
             }
+
             let demoted = !sn.ends_with("Exception") && !sn.ends_with("Error");
             let (base_name, filter, use_import) = class_edit_texts(
                 sn,

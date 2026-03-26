@@ -173,7 +173,7 @@ impl Backend {
             }
 
             // 4. Check the stub index directly (global built-in classes).
-            if self.stub_index.contains_key(fqn.as_str()) {
+            if self.stub_index.read().contains_key(fqn.as_str()) {
                 continue;
             }
 
@@ -934,6 +934,30 @@ mod tests {
         assert!(
             !diags.iter().any(|d| d.message.contains("$data")),
             "by-reference @param &$data must not be flagged as unknown class, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_false_positive_for_namespaced_constant() {
+        // Standalone namespaced constant access (e.g. `\PHPStan\PHP_VERSION_ID`)
+        // is a ConstantAccess in the parser, not a class reference.  It must
+        // not produce an "unknown class" diagnostic.
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = concat!(
+            "<?php\n",
+            "namespace App\\Console;\n",
+            "\n",
+            "function check(): int {\n",
+            "    return \\PHPStan\\PHP_VERSION_ID;\n",
+            "}\n",
+        );
+
+        let diags = collect(&backend, uri, content);
+        assert!(
+            !diags.iter().any(|d| d.message.contains("PHPStan")),
+            "namespaced constant \\PHPStan\\PHP_VERSION_ID must not be flagged as unknown class, got: {:?}",
             diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
     }

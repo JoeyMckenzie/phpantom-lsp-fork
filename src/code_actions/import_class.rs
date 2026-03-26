@@ -378,7 +378,8 @@ impl Backend {
         // ── 4. Stubs (built-in PHP classes) ─────────────────────────────
         // Stubs are global-namespace classes, so the FQN is the short name.
         // Only add if the file has a namespace (otherwise no import needed).
-        for &stub_name in self.stub_index.keys() {
+        let stub_idx = self.stub_index.read();
+        for &stub_name in stub_idx.keys() {
             if short_name(stub_name).to_lowercase() == name_lower
                 && !candidates
                     .iter()

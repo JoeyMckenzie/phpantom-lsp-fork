@@ -4,6 +4,139 @@ use common::{create_psr4_workspace, create_test_backend};
 use tower_lsp::LanguageServer;
 use tower_lsp::lsp_types::*;
 
+// ─── DefineInfo value extraction correctness ────────────────────────────────
+
+/// The parser should extract exactly the value expression text, with no
+/// trailing `)` or `;` from the surrounding `define(...)` call.
+#[tokio::test]
+async fn test_define_value_no_trailing_paren() {
+    let backend = create_test_backend();
+    let uri = "file:///define_value.php";
+    let content = "<?php\ndefine('REPORT_ALL', 255);\n";
+    backend.update_ast(uri, content);
+
+    let dmap = backend.global_defines().read();
+    let info = dmap
+        .get("REPORT_ALL")
+        .expect("REPORT_ALL should be in global_defines");
+    assert_eq!(
+        info.value.as_deref(),
+        Some("255"),
+        "value should be '255', not '255)' or '255);'"
+    );
+}
+
+/// `const` declarations should also extract clean values.
+#[tokio::test]
+async fn test_const_value_no_trailing_semicolon() {
+    let backend = create_test_backend();
+    let uri = "file:///const_value.php";
+    let content = "<?php\nconst LIMIT = 100;\n";
+    backend.update_ast(uri, content);
+
+    let dmap = backend.global_defines().read();
+    let info = dmap
+        .get("LIMIT")
+        .expect("LIMIT should be in global_defines");
+    assert_eq!(
+        info.value.as_deref(),
+        Some("100"),
+        "value should be '100', not '100;'"
+    );
+}
+
+/// String values in define() should be extracted with their quotes intact.
+#[tokio::test]
+async fn test_define_string_value() {
+    let backend = create_test_backend();
+    let uri = "file:///define_str.php";
+    let content = "<?php\ndefine('APP_NAME', 'PHPantom');\n";
+    backend.update_ast(uri, content);
+
+    let dmap = backend.global_defines().read();
+    let info = dmap
+        .get("APP_NAME")
+        .expect("APP_NAME should be in global_defines");
+    assert_eq!(
+        info.value.as_deref(),
+        Some("'PHPantom'"),
+        "string value should include quotes but no trailing paren"
+    );
+}
+
+/// define() with no second argument should have value = None.
+#[tokio::test]
+async fn test_define_no_value() {
+    let backend = create_test_backend();
+    let uri = "file:///define_noval.php";
+    // This is technically invalid PHP but stubs sometimes have it.
+    let content = "<?php\ndefine('NO_VAL');\n";
+    backend.update_ast(uri, content);
+
+    let dmap = backend.global_defines().read();
+    // It may or may not appear in global_defines; if it does, value should be None.
+    if let Some(info) = dmap.get("NO_VAL") {
+        assert_eq!(
+            info.value, None,
+            "define with no second arg should have no value"
+        );
+    }
+}
+
+// ─── DefineInfo value extraction from multi-constant stub files ─────────────
+
+/// Reproduces the scenario where a stub file contains multiple constants
+/// defined via `define()` back-to-back, as in the mysqli stubs.
+/// The value for `MYSQLI_REPORT_ALL` should be `255`, not `255)`.
+#[tokio::test]
+async fn test_define_value_multi_constant_stub_file() {
+    let backend = create_test_backend();
+    let uri = "file:///mysqli_constants.php";
+    let content = concat!(
+        "<?php\n",
+        "define('MYSQLI_REPORT_ALL', 255);\n",
+        "/**\n",
+        " * Turns reporting off.\n",
+        " */\n",
+        "define('MYSQLI_REPORT_OFF', 0);\n",
+    );
+    backend.update_ast(uri, content);
+
+    let dmap = backend.global_defines().read();
+
+    let all = dmap
+        .get("MYSQLI_REPORT_ALL")
+        .expect("MYSQLI_REPORT_ALL should exist");
+    assert_eq!(
+        all.value.as_deref(),
+        Some("255"),
+        "value should be '255', not '255)'"
+    );
+
+    let off = dmap
+        .get("MYSQLI_REPORT_OFF")
+        .expect("MYSQLI_REPORT_OFF should exist");
+    assert_eq!(off.value.as_deref(), Some("0"), "value should be '0'");
+}
+
+/// Verify that `const` declarations in stubs also extract clean values
+/// without trailing semicolons or parens.
+#[tokio::test]
+async fn test_const_declaration_value_clean() {
+    let backend = create_test_backend();
+    let uri = "file:///consts.php";
+    let content = "<?php\nconst LIMIT = 100;\nconst NAME = 'hello';\n";
+    backend.update_ast(uri, content);
+
+    let dmap = backend.global_defines().read();
+
+    let limit = dmap.get("LIMIT").expect("LIMIT should exist");
+    assert_eq!(limit.value.as_deref(), Some("100"));
+
+    let name = dmap.get("NAME").expect("NAME should exist");
+    assert_eq!(name.value.as_deref(), Some("'hello'"));
+}
+
 // ─── Same-File Constant Go-to-Definition ────────────────────────────────────
 
 /// Clicking on a constant name used in an expression should jump to the

@@ -1171,7 +1171,7 @@ impl Backend {
         // ── `use const` → only constants ────────────────────────────
         if matches!(class_ctx, ClassNameContext::UseConst) {
             let (constant_items, const_incomplete) =
-                self.build_constant_completions(&partial, current_uri);
+                self.build_constant_completions(&partial, current_uri, position);
             // Filter out constants defined in the current file.
             let constant_items = filter_current_file_constants(constant_items, current_uri, self);
             let items = append_semicolon_to_insert_text(constant_items);
@@ -1294,7 +1294,7 @@ impl Backend {
         }
 
         let (constant_items, const_incomplete) =
-            self.build_constant_completions(&partial, current_uri);
+            self.build_constant_completions(&partial, current_uri, position);
         let (function_items, func_incomplete) = self.build_function_completions(
             &partial,
             false,

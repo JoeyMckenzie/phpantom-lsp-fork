@@ -731,7 +731,8 @@ impl Backend {
         // search for the target name narrows candidates before we parse.
         // Parsing is lazy and cached in ast_map, so subsequent lookups
         // hit Phase 1.
-        for (&stub_name, &stub_source) in &self.stub_index {
+        let stub_idx = self.stub_index.read();
+        for (&stub_name, &stub_source) in &*stub_idx {
             if seen_fqns.contains(stub_name) {
                 continue;
             }

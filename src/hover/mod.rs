@@ -788,8 +788,8 @@ impl Backend {
     /// 3. `autoload_file_paths` — last-resort lazy parse of known
     ///    autoload files for constants the byte-level scanner missed.
     /// 4. `stub_constant_index` — built-in PHP constants from stubs.
-    ///    Extracts the value by scanning the stub source for the
-    ///    constant definition.
+    ///    Lazily parses the stub file via `update_ast` (which populates
+    ///    `global_defines`), then re-checks.
     ///
     /// Returns `Some(Some(val))` when the constant exists with a known
     /// value, `Some(None)` when it exists but the value is unknown, and
@@ -847,11 +847,24 @@ impl Backend {
         }
 
         // Phase 4: built-in PHP constants from embedded stubs.
-        // The stub source is the raw PHP file; scan it for a matching
-        // `define('NAME', value)` or `const NAME = value;` line.
-        if let Some(&stub_source) = self.stub_constant_index.get(name) {
-            let value = extract_constant_value_from_source(name, stub_source);
-            return Some(value);
+        // Parse the stub via update_ast (which populates global_defines),
+        // then re-check.  This is the same lazy-parse pattern as Phases
+        // 2 and 3 — no special raw-source scanning needed.
+        let stub_const_idx = self.stub_constant_index.read();
+        if let Some(&stub_source) = stub_const_idx.get(name) {
+            let stub_uri = format!("phpantom-stub://const/{}", name);
+            self.update_ast(&stub_uri, stub_source);
+            let lookup = self
+                .global_defines
+                .read()
+                .get(name)
+                .map(|info| info.value.clone());
+            if lookup.is_some() {
+                return lookup;
+            }
+            // Stub was parsed but constant not found in global_defines —
+            // it exists in the index, so report it with unknown value.
+            return Some(None);
         }
 
         None
@@ -1738,20 +1751,36 @@ fn build_trait_summary_body(cls: &ClassInfo) -> String {
 ///
 /// Returns `Some(value_string)` when found, `None` when the constant
 /// definition could not be located or the value could not be extracted.
+///
+/// **Note:** Production code should use `update_ast` to parse constants
+/// through the AST pipeline (which populates `global_defines`).  This
+/// function exists only for unit tests.
+#[cfg(test)]
 pub(crate) fn extract_constant_value_from_source(name: &str, source: &str) -> Option<String> {
     // Try `define('NAME', value)` pattern.
     for quote in &["'", "\""] {
         let needle = format!("define({quote}{name}{quote}");
         if let Some(pos) = source.find(&needle) {
-            // Find the comma after the name, then extract until closing paren.
+            // Extract only the second argument.  Stop at the first
+            // unquoted comma (third argument) or closing paren,
+            // whichever comes first.
             let after = &source[pos + needle.len()..];
             if let Some(comma) = after.find(',') {
                 let value_start = &after[comma + 1..];
-                // Find the closing `)` — handle nested parens for simple cases.
                 let trimmed = value_start.trim_start();
-                if let Some(end) = find_balanced_close_paren(trimmed) {
+                // Find where the second argument ends: either an
+                // unquoted comma (start of optional third arg) or
+                // the closing paren.
+                let end =
+                    find_unquoted_comma(trimmed).or_else(|| find_balanced_close_paren(trimmed));
+                if let Some(end) = end {
                     let val = trimmed[..end].trim();
                     if !val.is_empty() {
+                        // Empty string literals are placeholders for
+                        // runtime-defined values — show the type instead.
+                        if val == "''" || val == "\"\"" {
+                            return Some("string".to_string());
+                        }
                         return Some(val.to_string());
                     }
                 }
@@ -1778,9 +1807,33 @@ pub(crate) fn extract_constant_value_from_source(name: &str, source: &str) -> Op
     None
 }
 
+/// Find the position of the first unquoted comma in `s`.
+///
+/// Skips over single- and double-quoted string literals so that
+/// commas inside string values are not mistaken for argument
+/// separators.
+#[cfg(test)]
+fn find_unquoted_comma(s: &str) -> Option<usize> {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut prev = b'\0';
+
+    for (i, &b) in s.as_bytes().iter().enumerate() {
+        match b {
+            b'\'' if !in_double && prev != b'\\' => in_single = !in_single,
+            b'"' if !in_single && prev != b'\\' => in_double = !in_double,
+            b',' if !in_single && !in_double => return Some(i),
+            _ => {}
+        }
+        prev = b;
+    }
+    None
+}
+
 /// Find the position of the closing `)` that matches an implicit
 /// opening paren, handling one level of nesting and string literals.
-pub(crate) fn find_balanced_close_paren(s: &str) -> Option<usize> {
+#[cfg(test)]
+fn find_balanced_close_paren(s: &str) -> Option<usize> {
     let mut depth = 0u32;
     let mut in_single = false;
     let mut in_double = false;

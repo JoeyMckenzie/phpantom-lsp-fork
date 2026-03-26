@@ -83,8 +83,8 @@ impl ClassNameContext {
     }
 
     /// Check whether a class-like matches this context given only kind
-    /// flags (used when the full `ClassInfo` is not available, e.g.
-    /// scanning a raw stub source).
+    /// flags (used by tests for `detect_stub_class_kind`).
+    #[cfg(test)]
     pub(crate) fn matches_kind_flags(
         &self,
         kind: ClassLikeKind,
@@ -380,6 +380,7 @@ pub(crate) fn is_class_declaration_name(content: &str, position: Position) -> bo
 /// Looks for a declaration line like `class Foo`, `interface Bar`,
 /// `trait Baz`, or `enum Qux` and returns the kind along with
 /// `is_abstract` and `is_final` flags.
+#[cfg(test)]
 pub(crate) fn detect_stub_class_kind(
     class_name: &str,
     source: &str,
@@ -1458,7 +1459,8 @@ impl Backend {
         }
 
         // ── 5. Built-in PHP classes from stubs (lowest priority) ────
-        for &name in self.stub_index.keys() {
+        let stub_idx = self.stub_index.read();
+        for &name in stub_idx.keys() {
             let sn = short_name(name);
             if !matches_class_prefix(
                 sn,
@@ -1472,27 +1474,16 @@ impl Backend {
             if !seen_fqns.insert(name.to_string()) {
                 continue;
             }
-            // Apply context-aware filtering.  Unlike classmap entries
-            // (where we only have a file path), stub source is already
-            // in memory so we can scan it to determine the kind even
-            // when the stub hasn't been fully parsed into ast_map yet.
-            if context.is_class_only() {
-                // Fast path: already loaded in ast_map.
-                if let Some(cls) = self.find_class_in_ast_map(name) {
-                    if !context.matches(&cls) {
-                        continue;
-                    }
-                } else if let Some(source) = self.stub_index.get(name) {
-                    // Slow path: scan the raw PHP source for the
-                    // declaration keyword.
-                    if let Some((kind, is_abstract, is_final)) =
-                        detect_stub_class_kind(name, source)
-                        && !context.matches_kind_flags(kind, is_abstract, is_final)
-                    {
-                        continue;
-                    }
-                    // If the scan fails, allow through.
-                }
+
+            // Apply context-aware filtering.  Parse-and-cache the
+            // stub if it lives in memory but hasn't been parsed yet,
+            // so we get a real ClassInfo with kind/abstract/final
+            // flags instead of scanning raw source.
+            if context.is_class_only()
+                && let Some(cls) = self.load_stub_class(name)
+                && !context.matches(&cls)
+            {
+                continue;
             }
             let (mut base_name, filter, mut use_import) = class_edit_texts(
                 sn,
@@ -1663,7 +1654,7 @@ impl Backend {
         if self.classmap.read().contains_key(fqn) {
             return false;
         }
-        if self.stub_index.contains_key(fqn) {
+        if self.stub_index.read().contains_key(fqn) {
             return false;
         }
 
@@ -1692,7 +1683,12 @@ impl Backend {
         if self.classmap.read().keys().any(|k| k.starts_with(&prefix)) {
             return true;
         }
-        if self.stub_index.keys().any(|k| k.starts_with(&prefix)) {
+        if self
+            .stub_index
+            .read()
+            .keys()
+            .any(|k| k.starts_with(&prefix))
+        {
             return true;
         }
 
@@ -1704,26 +1700,16 @@ impl Backend {
     /// allow it through if not loaded.
     ///
     /// Returns `true` when the class is found and satisfies
-    /// `context.matches()`, or when the class is not in the `ast_map`
-    /// but its stub source can be scanned and satisfies the context.
-    /// Only returns `true` for truly unknown classes (not in ast_map
-    /// and not in stub_index) as a last resort.
+    /// `context.matches()`, or when the class cannot be loaded.
+    /// Only returns `true` for truly unknown classes as a last resort.
     fn matches_context_or_unloaded(&self, class_name: &str, context: ClassNameContext) -> bool {
-        match self.find_class_in_ast_map(class_name) {
-            Some(c) => context.matches(&c),
-            None => {
-                // Fall back to scanning the raw stub source to determine
-                // the class kind without fully parsing it.
-                if let Some(source) = self.stub_index.get(class_name)
-                    && let Some((kind, is_abstract, is_final)) =
-                        detect_stub_class_kind(class_name, source)
-                {
-                    return context.matches_kind_flags(kind, is_abstract, is_final);
-                }
-                // Truly unknown — allow through.
-                true
-            }
+        // load_stub_class checks ast_map first, then parses in-memory
+        // stubs if needed.  No disk I/O.
+        if let Some(cls) = self.load_stub_class(class_name) {
+            return context.matches(&cls);
         }
+        // Truly unknown — allow through.
+        true
     }
 
     /// Check whether `class_name` exists in any class source (ast_map,
@@ -1736,7 +1722,7 @@ impl Backend {
         if self.find_class_in_ast_map(class_name).is_some() {
             return true;
         }
-        if self.stub_index.contains_key(class_name) {
+        if self.stub_index.read().contains_key(class_name) {
             return true;
         }
         if self.class_index.read().contains_key(class_name) {

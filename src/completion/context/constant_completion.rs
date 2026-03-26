@@ -9,7 +9,6 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::completion::builder::deprecation_tag;
 use crate::completion::resolve::CompletionItemData;
-use crate::hover::extract_constant_value_from_source;
 
 /// Build a single constant `CompletionItem` with the standard layout.
 ///
@@ -24,6 +23,7 @@ fn build_constant_item(
     sort_text: String,
     is_deprecated: bool,
     uri: &str,
+    replace_range: Option<Range>,
 ) -> CompletionItem {
     let data = serde_json::to_value(CompletionItemData {
         class_name: String::new(),
@@ -33,6 +33,13 @@ fn build_constant_item(
         extra_class_names: vec![],
     })
     .ok();
+    // Compute text_edit before `name` is moved into `filter_text`.
+    let text_edit = replace_range.map(|range| {
+        CompletionTextEdit::Edit(TextEdit {
+            range,
+            new_text: name.clone(),
+        })
+    });
     CompletionItem {
         label: name.clone(),
         kind: Some(CompletionItemKind::CONSTANT),
@@ -41,6 +48,7 @@ fn build_constant_item(
         filter_text: Some(name),
         sort_text: Some(sort_text),
         tags: deprecation_tag(is_deprecated),
+        text_edit,
         data,
         ..CompletionItem::default()
     }
@@ -71,10 +79,31 @@ impl Backend {
         &self,
         prefix: &str,
         uri: &str,
+        position: Position,
     ) -> (Vec<CompletionItem>, bool) {
         let prefix_lower = prefix.strip_prefix('\\').unwrap_or(prefix).to_lowercase();
         let mut seen: HashSet<String> = HashSet::new();
         let mut items: Vec<CompletionItem> = Vec::new();
+
+        // When the user is typing a namespace-qualified constant
+        // reference (e.g. `PHPStan\PHP`), the editor may treat `\` as
+        // a word boundary and only replace the text after the last `\`.
+        // Provide an explicit replacement range covering the entire
+        // typed prefix so the editor replaces it in full, avoiding
+        // duplicate namespace prefixes like `PHPStan\PHPStan\PHP_VERSION_ID`.
+        let replace_range = if prefix.contains('\\') {
+            Some(Range {
+                start: Position {
+                    line: position.line,
+                    character: position
+                        .character
+                        .saturating_sub(prefix.chars().count() as u32),
+                },
+                end: position,
+            })
+        } else {
+            None
+        };
 
         // ── 1. User-defined constants (from parsed files) ───────────
         {
@@ -92,6 +121,7 @@ impl Backend {
                     format!("5_{}", name.to_lowercase()),
                     false,
                     uri,
+                    replace_range,
                 ));
             }
         }
@@ -123,27 +153,29 @@ impl Backend {
                     format!("5_{}", name.to_lowercase()),
                     false,
                     uri,
+                    replace_range,
                 ));
             }
         }
 
         // ── 3. Built-in PHP constants from stubs ────────────────────
-        for (&name, &stub_source) in &self.stub_constant_index {
+        // Only show the name here — the value is resolved lazily on
+        // hover / resolve, same as stub functions.
+        let stub_const_idx = self.stub_constant_index.read();
+        for &name in stub_const_idx.keys() {
             if !name.to_lowercase().contains(&prefix_lower) {
                 continue;
             }
             if !seen.insert(name.to_string()) {
                 continue;
             }
-            // Extract the value directly from the stub PHP source.
-            // This is a cheap string scan, not a full parse.
-            let value = extract_constant_value_from_source(name, stub_source);
             items.push(build_constant_item(
                 name.to_string(),
-                value,
+                None,
                 format!("6_{}", name.to_lowercase()),
                 false,
                 uri,
+                replace_range,
             ));
         }
 

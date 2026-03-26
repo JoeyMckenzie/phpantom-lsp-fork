@@ -52,7 +52,7 @@ use crate::virtual_members::laravel::infer_relationship_from_body;
 
 use super::{
     DeprecationInfo, DocblockCtx, extract_hint_string, extract_parameters, extract_property_info,
-    extract_visibility, is_available_for_version, merge_deprecation_info,
+    extract_visibility, is_available_for_version, is_removed_for_version, merge_deprecation_info,
 };
 
 /// Docblock-derived metadata common to all class-like declarations.
@@ -650,6 +650,15 @@ impl Backend {
         for statement in statements {
             match statement {
                 Statement::Class(class) => {
+                    // Skip classes whose docblock has `@removed X.Y`
+                    // where X.Y <= the target PHP version.
+                    if let Some(ctx) = doc_ctx
+                        && let Some(ver) = ctx.php_version
+                        && is_removed_for_version(class, ctx, ver)
+                    {
+                        continue;
+                    }
+
                     let class_name = class.name.value.to_string();
 
                     let parent_class = class
@@ -755,6 +764,15 @@ impl Backend {
                     Self::find_anonymous_classes_in_members(class.members.iter(), classes, doc_ctx);
                 }
                 Statement::Interface(iface) => {
+                    // Skip interfaces whose docblock has `@removed X.Y`
+                    // where X.Y <= the target PHP version.
+                    if let Some(ctx) = doc_ctx
+                        && let Some(ver) = ctx.php_version
+                        && is_removed_for_version(iface, ctx, ver)
+                    {
+                        continue;
+                    }
+
                     let iface_name = iface.name.value.to_string();
 
                     // Interfaces can extend multiple parent interfaces.
@@ -842,6 +860,15 @@ impl Backend {
                     Self::find_anonymous_classes_in_members(iface.members.iter(), classes, doc_ctx);
                 }
                 Statement::Trait(trait_def) => {
+                    // Skip traits whose docblock has `@removed X.Y`
+                    // where X.Y <= the target PHP version.
+                    if let Some(ctx) = doc_ctx
+                        && let Some(ver) = ctx.php_version
+                        && is_removed_for_version(trait_def, ctx, ver)
+                    {
+                        continue;
+                    }
+
                     let trait_name = trait_def.name.value.to_string();
 
                     let doc_info = extract_class_docblock(trait_def, doc_ctx);
@@ -915,6 +942,15 @@ impl Backend {
                     );
                 }
                 Statement::Enum(enum_def) => {
+                    // Skip enums whose docblock has `@removed X.Y`
+                    // where X.Y <= the target PHP version.
+                    if let Some(ctx) = doc_ctx
+                        && let Some(ver) = ctx.php_version
+                        && is_removed_for_version(enum_def, ctx, ver)
+                    {
+                        continue;
+                    }
+
                     let enum_name = enum_def.name.value.to_string();
 
                     let ExtractedMembers {
@@ -1527,6 +1563,15 @@ impl Backend {
                     if let Some(ctx) = doc_ctx
                         && let Some(ver) = ctx.php_version
                         && !is_available_for_version(&method.attribute_lists, ctx, ver)
+                    {
+                        continue;
+                    }
+
+                    // Skip methods whose docblock has `@removed X.Y`
+                    // where X.Y <= the target PHP version.
+                    if let Some(ctx) = doc_ctx
+                        && let Some(ver) = ctx.php_version
+                        && is_removed_for_version(method, ctx, ver)
                     {
                         continue;
                     }

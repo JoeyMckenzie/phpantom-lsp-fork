@@ -404,3 +404,101 @@ fn variable_hover_body_scalar_not_split() {
     assert!(!body.contains("---"));
     assert!(body.contains("$val = string"));
 }
+
+// ─── extract_constant_value_from_source tests ───────────────────────────────
+
+#[test]
+fn extract_constant_value_simple_define() {
+    let source = "define('MY_CONST', 42);";
+    assert_eq!(
+        extract_constant_value_from_source("MY_CONST", source),
+        Some("42".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_string_define() {
+    let source = "define('BASE_PATH', '/var/www');";
+    assert_eq!(
+        extract_constant_value_from_source("BASE_PATH", source),
+        Some("'/var/www'".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_strips_third_arg_true() {
+    let source = "define('__DIR__', '', true);";
+    assert_eq!(
+        extract_constant_value_from_source("__DIR__", source),
+        Some("string".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_strips_third_arg_false() {
+    let source = "define('__FILE__', \"\", false);";
+    assert_eq!(
+        extract_constant_value_from_source("__FILE__", source),
+        Some("string".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_third_arg_with_nonempty_value() {
+    let source = "define('FOO', 123, true);";
+    assert_eq!(
+        extract_constant_value_from_source("FOO", source),
+        Some("123".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_empty_single_quoted_string() {
+    let source = "define('EMPTY_CONST', '');";
+    assert_eq!(
+        extract_constant_value_from_source("EMPTY_CONST", source),
+        Some("string".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_empty_double_quoted_string() {
+    let source = "define('EMPTY_CONST', \"\");";
+    assert_eq!(
+        extract_constant_value_from_source("EMPTY_CONST", source),
+        Some("string".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_no_third_arg_not_stripped() {
+    let source = "define('NORMAL', 'hello');";
+    assert_eq!(
+        extract_constant_value_from_source("NORMAL", source),
+        Some("'hello'".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_const_syntax() {
+    let source = "const MY_CONST = 99;";
+    assert_eq!(
+        extract_constant_value_from_source("MY_CONST", source),
+        Some("99".to_string())
+    );
+}
+
+#[test]
+fn extract_constant_value_not_found() {
+    let source = "define('OTHER', 1);";
+    assert_eq!(extract_constant_value_from_source("MISSING", source), None);
+}
+
+#[test]
+fn extract_constant_value_comma_inside_string_not_confused() {
+    let source = "define('MSG', 'hello, world', true);";
+    assert_eq!(
+        extract_constant_value_from_source("MSG", source),
+        Some("'hello, world'".to_string())
+    );
+}

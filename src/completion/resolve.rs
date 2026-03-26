@@ -295,11 +295,16 @@ impl Backend {
 
         let lookup = self.lookup_global_constant(name);
 
-        let md = match lookup {
+        let md = match &lookup {
             Some(Some(val)) => format!("```php\n<?php\nconst {} = {};\n```", name, val),
             Some(None) => format!("```php\n<?php\nconst {};\n```", name),
             None => return,
         };
+
+        // Fill in the inline detail (value hint next to the label).
+        if let Some(Some(val)) = &lookup {
+            item.detail = Some(val.clone());
+        }
 
         set_documentation(item, md);
     }

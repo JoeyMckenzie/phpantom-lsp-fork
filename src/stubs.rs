@@ -72,6 +72,131 @@ pub fn build_stub_function_index() -> HashMap<&'static str, &'static str> {
         .collect()
 }
 
+/// Quick byte-level check whether a stub function has been `@removed`
+/// at or before the given PHP version.
+///
+/// This scans the raw PHP source for the function's docblock without a
+/// full AST parse, so it is cheap enough to call during completion
+/// filtering.  Only the docblock immediately preceding
+/// `function <short_name>` is examined.
+///
+/// Returns `true` when the function's docblock contains `@removed X.Y`
+/// and `php_version >= X.Y`.
+pub fn is_stub_function_removed(
+    source: &str,
+    func_name: &str,
+    php_version: crate::types::PhpVersion,
+) -> bool {
+    // Use the short (unqualified) name for the search pattern.
+    let short = func_name.rsplit('\\').next().unwrap_or(func_name);
+
+    let needle = format!("function {short}(");
+    let Some(func_pos) = source.find(&needle).or_else(|| {
+        // Some stubs have a space or newline before `(`.
+        let needle2 = format!("function {short} ");
+        source.find(&needle2)
+    }) else {
+        return false;
+    };
+
+    is_preceding_docblock_removed(source, func_pos, php_version)
+}
+
+/// Quick byte-level check whether a stub class/interface/trait has been
+/// `@removed` at or before the given PHP version.
+///
+/// Same approach as [`is_stub_function_removed`] but searches for
+/// `class <name>`, `interface <name>`, or `trait <name>`.
+pub fn is_stub_class_removed(
+    source: &str,
+    class_name: &str,
+    php_version: crate::types::PhpVersion,
+) -> bool {
+    // Use the short (unqualified) name for the search pattern.
+    let short = class_name.rsplit('\\').next().unwrap_or(class_name);
+
+    // Try `class Name`, `interface Name`, `trait Name`.
+    let candidates = [
+        format!("class {short}"),
+        format!("interface {short}"),
+        format!("trait {short}"),
+    ];
+
+    let decl_pos = candidates
+        .iter()
+        .filter_map(|needle| {
+            source.find(needle.as_str()).and_then(|pos| {
+                // Verify the character after the name is a boundary
+                // (space, newline, `{`, or end-of-string) to avoid
+                // matching `class FooBar` when looking for `class Foo`.
+                let after = pos + needle.len();
+                if after >= source.len() {
+                    return Some(pos);
+                }
+                let ch = source.as_bytes()[after];
+                if ch == b' ' || ch == b'\n' || ch == b'\r' || ch == b'{' || ch == b'\t' {
+                    Some(pos)
+                } else {
+                    None
+                }
+            })
+        })
+        .next();
+
+    let Some(pos) = decl_pos else {
+        return false;
+    };
+
+    is_preceding_docblock_removed(source, pos, php_version)
+}
+
+/// Shared helper: check if the docblock immediately preceding the
+/// declaration at `decl_pos` contains `@removed X.Y` where
+/// `php_version >= X.Y`.
+fn is_preceding_docblock_removed(
+    source: &str,
+    decl_pos: usize,
+    php_version: crate::types::PhpVersion,
+) -> bool {
+    let before = &source[..decl_pos];
+    let Some(doc_end) = before.rfind("*/") else {
+        return false;
+    };
+
+    // Make sure there is no intervening declaration between the
+    // docblock end and our target — otherwise the docblock belongs
+    // to a different element.
+    let between = &source[doc_end + 2..decl_pos];
+    if between.contains("function ") || between.contains("class ") || between.contains("interface ")
+    {
+        return false;
+    }
+
+    let Some(doc_start) = source[..doc_end].rfind("/**") else {
+        return false;
+    };
+
+    let docblock = &source[doc_start..doc_end + 2];
+
+    for line in docblock.lines() {
+        let trimmed = line.trim().trim_start_matches('*').trim();
+        let rest = if let Some(r) = trimmed.strip_prefix("@removed ") {
+            r
+        } else if let Some(r) = trimmed.strip_prefix("@removed\t") {
+            r
+        } else {
+            continue;
+        };
+        if let Some(ver) = crate::types::PhpVersion::from_composer_constraint(rest.trim())
+            && php_version >= ver
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Build a lookup table mapping constant names to their embedded PHP
 /// source code.
 ///

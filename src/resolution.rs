@@ -142,9 +142,10 @@ impl Backend {
         //      avoid `Demo\PDO` matching the global `PDO` stub.
         //
         // Strategy (a) is tried first because it is more specific.
+        let stub_idx = self.stub_index.read();
         if expected_ns.is_some() {
             // Namespaced lookup — try the full FQN as a stub key.
-            if let Some(&stub_content) = self.stub_index.get(class_name) {
+            if let Some(&stub_content) = stub_idx.get(class_name) {
                 let stub_uri = format!("phpantom-stub://{}", class_name);
                 let ver = Some(self.php_version());
                 if let Some(classes) =
@@ -154,7 +155,7 @@ impl Backend {
                     return Some(Arc::clone(cls));
                 }
             }
-        } else if let Some(&stub_content) = self.stub_index.get(last_segment) {
+        } else if let Some(&stub_content) = stub_idx.get(last_segment) {
             // Global-namespace lookup — match by short name only.
             let stub_uri = format!("phpantom-stub://{}", last_segment);
             let ver = Some(self.php_version());
@@ -171,6 +172,48 @@ impl Backend {
         self.class_not_found_cache
             .write()
             .insert(class_name.to_owned());
+        None
+    }
+
+    /// Try to load a class from the embedded stub index only.
+    ///
+    /// This is the in-memory-only counterpart of [`find_or_load_class`].
+    /// It checks the `ast_map` first (O(1) via the FQN index), and if
+    /// the class hasn't been parsed yet, looks it up in the in-memory
+    /// `stub_index`.  When found there, it parses and caches the stub
+    /// under a `phpantom-stub://` URI so subsequent lookups are free.
+    ///
+    /// **No disk I/O is performed.**  Classes that live on disk (classmap,
+    /// PSR-4, vendor) are not resolved — callers that need those should
+    /// use [`find_or_load_class`] instead.
+    pub(crate) fn load_stub_class(&self, class_name: &str) -> Option<Arc<ClassInfo>> {
+        let last_segment = short_name(class_name);
+
+        // Fast path: already parsed and cached.
+        if let Some(cls) = self.find_class_in_ast_map(class_name) {
+            return Some(cls);
+        }
+
+        // Look up in the in-memory stub index.
+        let stub_idx = self.stub_index.read();
+        let stub_content = if class_name.contains('\\') {
+            // Namespaced lookup (e.g. "BcMath\\Number").
+            stub_idx.get(class_name).copied()
+        } else {
+            // Global-namespace lookup (e.g. "PDO").
+            stub_idx.get(last_segment).copied()
+        };
+
+        if let Some(content) = stub_content {
+            let stub_uri = format!("phpantom-stub://{}", class_name);
+            let ver = Some(self.php_version());
+            if let Some(classes) = self.parse_and_cache_content_versioned(content, &stub_uri, ver)
+                && let Some(cls) = classes.iter().find(|c| c.name == last_segment)
+            {
+                return Some(Arc::clone(cls));
+            }
+        }
+
         None
     }
 
@@ -492,8 +535,9 @@ impl Backend {
         // ones like "Brotli\\compress") to the raw PHP source of the file
         // that defines them.  We parse the entire file, cache all discovered
         // functions in global_functions, and return the one we need.
+        let stub_fn_idx = self.stub_function_index.read();
         for &name in candidates {
-            if let Some(&stub_content) = self.stub_function_index.get(name) {
+            if let Some(&stub_content) = stub_fn_idx.get(name) {
                 let ver = Some(self.php_version());
                 let functions = self.parse_functions_versioned(stub_content, ver);
 

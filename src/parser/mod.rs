@@ -136,6 +136,29 @@ pub(crate) fn is_available_for_version(
     }
 }
 
+/// Check whether a function, method, or class has been removed in the
+/// target PHP version based on a `@removed X.Y` docblock tag.
+///
+/// Returns `true` when the element has `@removed X.Y` and the target
+/// PHP version is >= X.Y (meaning it was removed before or at the
+/// target version).
+///
+/// Returns `false` when there is no `@removed` tag or the target
+/// version is older than the removal version.
+pub(crate) fn is_removed_for_version(
+    node: &impl HasSpan,
+    ctx: &DocblockCtx<'_>,
+    php_version: PhpVersion,
+) -> bool {
+    let docblock_text = crate::docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, node);
+    if let Some(text) = docblock_text
+        && let Some(removed_ver) = crate::docblock::extract_removed_version(text)
+    {
+        return php_version >= removed_ver;
+    }
+    false
+}
+
 /// Check whether a parameter is available for the given PHP version
 /// based on its `#[PhpStormStubsElementAvailable]` attributes.
 ///

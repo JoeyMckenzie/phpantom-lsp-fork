@@ -318,10 +318,12 @@ pub struct Backend {
     /// Maps class short name → raw PHP source code.
     ///
     /// Built once during construction via [`stubs::build_stub_class_index`].
+    /// Filtered at startup via [`set_php_version`](Self::set_php_version) to
+    /// remove stubs that do not exist in the target PHP version.
     /// Consulted by `find_or_load_class` as a final fallback after the
     /// `ast_map` and PSR-4 resolution.  Stub files are parsed lazily on
     /// first access and cached in `ast_map` under `phpantom-stub://` URIs.
-    pub(crate) stub_index: HashMap<&'static str, &'static str>,
+    pub(crate) stub_index: RwLock<HashMap<&'static str, &'static str>>,
     /// Cache of fully-resolved classes (inheritance + virtual members).
     ///
     /// Keyed by fully-qualified class name.  Populated lazily by
@@ -334,14 +336,18 @@ pub struct Backend {
     /// `str_contains`, …).  Maps function name → raw PHP source code.
     ///
     /// Built once during construction via [`stubs::build_stub_function_index`].
+    /// Filtered at startup via [`set_php_version`](Self::set_php_version) to
+    /// remove stubs that do not exist in the target PHP version.
     /// Can be consulted to resolve return types of built-in function calls.
-    pub(crate) stub_function_index: HashMap<&'static str, &'static str>,
+    pub(crate) stub_function_index: RwLock<HashMap<&'static str, &'static str>>,
     /// Embedded PHP stubs for built-in constants (e.g. `PHP_EOL`,
     /// `SORT_ASC`, …).  Maps constant name → raw PHP source code.
     ///
     /// Built once during construction via [`stubs::build_stub_constant_index`].
+    /// Filtered at startup via [`set_php_version`](Self::set_php_version) to
+    /// remove stubs that do not exist in the target PHP version.
     /// Can be consulted when resolving standalone constant references.
-    pub(crate) stub_constant_index: HashMap<&'static str, &'static str>,
+    pub(crate) stub_constant_index: RwLock<HashMap<&'static str, &'static str>>,
     /// The target PHP version used for version-aware stub filtering.
     ///
     /// Detected from `composer.json` (`require.php`) during server
@@ -522,9 +528,9 @@ impl Backend {
             class_not_found_cache: Arc::new(RwLock::new(HashSet::new())),
             classmap: Arc::new(RwLock::new(HashMap::new())),
             phar_archives: Arc::new(RwLock::new(HashMap::new())),
-            stub_index: stubs::build_stub_class_index(),
-            stub_function_index: stubs::build_stub_function_index(),
-            stub_constant_index: stubs::build_stub_constant_index(),
+            stub_index: RwLock::new(stubs::build_stub_class_index()),
+            stub_function_index: RwLock::new(stubs::build_stub_function_index()),
+            stub_constant_index: RwLock::new(stubs::build_stub_constant_index()),
             resolved_class_cache: virtual_members::new_resolved_class_cache(),
             php_version: Mutex::new(types::PhpVersion::default()),
             diag_version: Arc::new(AtomicU64::new(0)),
@@ -553,9 +559,15 @@ impl Backend {
     }
 
     /// Create a `Backend` without an LSP client (for unit / integration tests).
+    ///
+    /// Calls [`set_php_version`] with the default version so that
+    /// version-aware stub filtering (e.g. `@removed` eviction) runs
+    /// exactly as it does during real server initialization.
     pub fn new_test() -> Self {
         virtual_members::phpdoc::clear_mixin_cache();
-        Self::defaults()
+        let backend = Self::defaults();
+        backend.set_php_version(backend.php_version());
+        backend
     }
 
     /// Create a `Backend` for tests with custom stub class index.
@@ -564,10 +576,12 @@ impl Backend {
     /// `BackedEnum`) without depending on `composer install` having been run.
     pub fn new_test_with_stubs(stub_index: HashMap<&'static str, &'static str>) -> Self {
         virtual_members::phpdoc::clear_mixin_cache();
-        Self {
-            stub_index,
+        let backend = Self {
+            stub_index: RwLock::new(stub_index),
             ..Self::defaults()
-        }
+        };
+        backend.set_php_version(backend.php_version());
+        backend
     }
 
     /// Create a `Backend` for tests with custom class, function, and constant
@@ -581,12 +595,14 @@ impl Backend {
         stub_constant_index: HashMap<&'static str, &'static str>,
     ) -> Self {
         virtual_members::phpdoc::clear_mixin_cache();
-        Self {
-            stub_index,
-            stub_function_index,
-            stub_constant_index,
+        let backend = Self {
+            stub_index: RwLock::new(stub_index),
+            stub_function_index: RwLock::new(stub_function_index),
+            stub_constant_index: RwLock::new(stub_constant_index),
             ..Self::defaults()
-        }
+        };
+        backend.set_php_version(backend.php_version());
+        backend
     }
 
     /// Create a `Backend` for tests with a specific workspace root and PSR-4
@@ -596,11 +612,13 @@ impl Backend {
         psr4_mappings: Vec<composer::Psr4Mapping>,
     ) -> Self {
         virtual_members::phpdoc::clear_mixin_cache();
-        Self {
+        let backend = Self {
             workspace_root: Arc::new(RwLock::new(Some(workspace_root))),
             psr4_mappings: Arc::new(RwLock::new(psr4_mappings)),
             ..Self::defaults()
-        }
+        };
+        backend.set_php_version(backend.php_version());
+        backend
     }
 
     // ── Public accessors for integration tests ──────────────────────────
@@ -641,10 +659,12 @@ impl Backend {
         &self.classmap
     }
 
-    /// Borrow the stub constant index (used by integration tests to
+    /// Read the stub constant index (used by integration tests to
     /// verify built-in constants are present).
-    pub fn stub_constant_index(&self) -> &HashMap<&'static str, &'static str> {
-        &self.stub_constant_index
+    pub fn stub_constant_index(
+        &self,
+    ) -> parking_lot::RwLockReadGuard<'_, HashMap<&'static str, &'static str>> {
+        self.stub_constant_index.read()
     }
 
     /// Borrow the autoload function index (used by integration tests to
@@ -725,10 +745,10 @@ impl Backend {
             classmap: Arc::clone(&self.classmap),
             phar_archives: Arc::clone(&self.phar_archives),
             class_not_found_cache: Arc::clone(&self.class_not_found_cache),
-            stub_index: self.stub_index.clone(),
+            stub_index: RwLock::new(self.stub_index.read().clone()),
             resolved_class_cache: Arc::clone(&self.resolved_class_cache),
-            stub_function_index: self.stub_function_index.clone(),
-            stub_constant_index: self.stub_constant_index.clone(),
+            stub_function_index: RwLock::new(self.stub_function_index.read().clone()),
+            stub_constant_index: RwLock::new(self.stub_constant_index.read().clone()),
             php_version: Mutex::new(self.php_version()),
             vendor_uri_prefixes: Mutex::new(self.vendor_uri_prefixes.lock().clone()),
             vendor_dir_paths: Mutex::new(self.vendor_dir_paths.lock().clone()),
@@ -768,7 +788,16 @@ impl Backend {
 
     /// Set the PHP version (used by integration tests and during
     /// server initialization after reading `composer.json`).
+    ///
+    /// Also filters `stub_function_index` and `stub_index` to remove
+    /// entries that do not exist in the given PHP version.
     pub fn set_php_version(&self, version: types::PhpVersion) {
         *self.php_version.lock() = version;
+        self.stub_function_index
+            .write()
+            .retain(|name, source| !stubs::is_stub_function_removed(source, name, version));
+        self.stub_index
+            .write()
+            .retain(|name, source| !stubs::is_stub_class_removed(source, name, version));
     }
 }

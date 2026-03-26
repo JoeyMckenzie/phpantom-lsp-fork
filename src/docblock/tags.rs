@@ -20,7 +20,7 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::*;
 
-use crate::types::{AssertionKind, TypeAssertion};
+use crate::types::{AssertionKind, PhpVersion, TypeAssertion};
 
 use super::types::{
     base_class_name, clean_type, is_scalar, normalize_nullable, split_type_token, strip_nullable,
@@ -83,6 +83,34 @@ pub fn extract_deprecation_message(docblock: &str) -> Option<String> {
 /// sites that only need a boolean check.
 pub fn has_deprecated_tag(docblock: &str) -> bool {
     extract_deprecation_message(docblock).is_some()
+}
+
+/// Extract the PHP version from a `@removed` PHPDoc tag.
+///
+/// Handles the format `@removed X.Y` where `X.Y` is a PHP version
+/// (e.g. `7.0`, `8.0`).
+///
+/// Returns `None` when no `@removed` tag is present or the version
+/// cannot be parsed.
+pub fn extract_removed_version(docblock: &str) -> Option<PhpVersion> {
+    let inner = docblock
+        .trim()
+        .strip_prefix("/**")
+        .unwrap_or(docblock)
+        .strip_suffix("*/")
+        .unwrap_or(docblock);
+
+    for line in inner.lines() {
+        let trimmed = line.trim().trim_start_matches('*').trim();
+        if let Some(rest) = trimmed.strip_prefix("@removed ") {
+            return PhpVersion::from_composer_constraint(rest.trim());
+        }
+        if let Some(rest) = trimmed.strip_prefix("@removed\t") {
+            return PhpVersion::from_composer_constraint(rest.trim());
+        }
+    }
+
+    None
 }
 
 /// Extract all `@see` references from a PHPDoc block.
@@ -1922,5 +1950,35 @@ mod tests {
         assert!(result.contains("MyClass::$items"));
         assert!(result.contains("MyClass::setItems()"));
         assert!(result.contains("https://example.com/my/bar"));
+    }
+
+    // ── extract_removed_version ─────────────────────────────────────
+
+    #[test]
+    fn removed_tag_seven_zero() {
+        let doc = "/** @removed 7.0 */";
+        let version = extract_removed_version(doc).unwrap();
+        assert_eq!(version.major, 7);
+        assert_eq!(version.minor, 0);
+    }
+
+    #[test]
+    fn removed_tag_eight_zero() {
+        let doc = "/**\n * @removed 8.0\n */";
+        let version = extract_removed_version(doc).unwrap();
+        assert_eq!(version.major, 8);
+        assert_eq!(version.minor, 0);
+    }
+
+    #[test]
+    fn no_removed_tag() {
+        let doc = "/** @return string */";
+        assert_eq!(extract_removed_version(doc), None);
+    }
+
+    #[test]
+    fn other_tags_but_no_removed() {
+        let doc = "/**\n * @deprecated Use foo() instead.\n * @see NewClass\n * @return int\n */";
+        assert_eq!(extract_removed_version(doc), None);
     }
 }

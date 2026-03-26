@@ -1,6 +1,7 @@
 mod common;
 
 use common::{create_test_backend, create_test_backend_with_function_stubs};
+use phpantom_lsp::Backend;
 use tower_lsp::LanguageServer;
 use tower_lsp::lsp_types::*;
 
@@ -607,8 +608,8 @@ async fn test_completion_stub_constant_detail() {
     assert!(php_eol.is_some(), "Should find PHP_EOL in completions");
     let php_eol = php_eol.unwrap();
     assert!(
-        php_eol.detail.is_some(),
-        "Stub constants should show their value extracted from stub source"
+        php_eol.detail.is_none(),
+        "Stub constant detail should be None at completion time (filled in on resolve)"
     );
     assert_eq!(
         php_eol.kind,
@@ -1152,5 +1153,329 @@ async fn test_completion_stub_function_preg_match() {
         fn_labels.contains(&"preg_match"),
         "Should suggest preg_match. Got: {:?}",
         fn_labels
+    );
+}
+
+// ─── @removed tag filtering ────────────────────────────────────────────────
+
+/// Verify that `find_or_load_function` filters out functions whose docblock
+/// has `@removed X.Y` where the target PHP version is >= X.Y.
+#[tokio::test]
+async fn test_removed_function_filtered_out() {
+    let stub_content: &str = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @return string\n",
+        " * @removed 7.0\n",
+        " */\n",
+        "function mysql_tablename($result, $i) {}\n",
+        "\n",
+        "/**\n",
+        " * @return string\n",
+        " */\n",
+        "function array_map(callable $callback, array $array): array {}\n",
+    );
+
+    let mut function_stubs: std::collections::HashMap<&'static str, &'static str> =
+        std::collections::HashMap::new();
+    // Both names point to the same source — the removed one should be filtered.
+    function_stubs.insert(
+        "mysql_tablename",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+    function_stubs.insert(
+        "array_map",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+
+    let backend = phpantom_lsp::Backend::new_test_with_all_stubs(
+        std::collections::HashMap::new(),
+        function_stubs,
+        std::collections::HashMap::new(),
+    );
+    // Default PHP version is 8.5, which is >= 7.0.
+    assert!(
+        backend
+            .find_or_load_function(&["mysql_tablename"])
+            .is_none(),
+        "mysql_tablename (@removed 7.0) should be filtered out for PHP 8.5"
+    );
+    assert!(
+        backend.find_or_load_function(&["array_map"]).is_some(),
+        "array_map (no @removed) should still be available"
+    );
+}
+
+/// Verify that `@removed` does not filter out functions when the target
+/// PHP version is older than the removal version.
+///
+/// `parse_functions_versioned` is the parse-time layer that checks
+/// `@removed`.  When the PHP version is below the removal version the
+/// function should survive parsing and be resolvable.
+#[tokio::test]
+async fn test_removed_function_available_on_older_php() {
+    let stub_content = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @return array\n",
+        " * @removed 8.0\n",
+        " */\n",
+        "function each(&$array): array {}\n",
+    );
+
+    let backend = Backend::new_test();
+    // Target PHP 7.4 — `each` was removed in 8.0, so it should survive.
+    backend.set_php_version(phpantom_lsp::types::PhpVersion::new(7, 4));
+
+    let functions = backend.parse_functions_versioned(
+        stub_content,
+        Some(phpantom_lsp::types::PhpVersion::new(7, 4)),
+    );
+    assert!(
+        functions.iter().any(|f| f.name == "each"),
+        "each (@removed 8.0) should be present when parsing for PHP 7.4, got: {:?}",
+        functions.iter().map(|f| &f.name).collect::<Vec<_>>()
+    );
+
+    // Verify the converse: parsing for PHP 8.5 should filter it out.
+    let functions_85 = backend.parse_functions_versioned(
+        stub_content,
+        Some(phpantom_lsp::types::PhpVersion::new(8, 5)),
+    );
+    assert!(
+        !functions_85.iter().any(|f| f.name == "each"),
+        "each (@removed 8.0) should be filtered when parsing for PHP 8.5, got: {:?}",
+        functions_85.iter().map(|f| &f.name).collect::<Vec<_>>()
+    );
+}
+
+/// Verify that `@removed` on a class method filters out just that method.
+/// The removed method should not appear in member completion results.
+#[tokio::test]
+async fn test_removed_method_filtered_from_completion() {
+    let stub_content: &str = concat!(
+        "<?php\n",
+        "class SplFileObject {\n",
+        "    /** @return string */\n",
+        "    public function fgets(): string {}\n",
+        "\n",
+        "    /**\n",
+        "     * @return string|false\n",
+        "     * @removed 8.0\n",
+        "     */\n",
+        "    public function fgetss($allowable_tags = null) {}\n",
+        "}\n",
+    );
+
+    let mut class_stubs: std::collections::HashMap<&'static str, &'static str> =
+        std::collections::HashMap::new();
+    class_stubs.insert(
+        "SplFileObject",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+
+    let backend = Backend::new_test_with_all_stubs(
+        class_stubs,
+        std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
+    );
+
+    let uri = Url::parse("file:///test_removed_method.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "function test(SplFileObject $f) {\n",
+        "    $f->\n",
+        "}\n",
+    );
+
+    let items = complete_at(&backend, &uri, text, 2, 8).await;
+    let method_names: Vec<&str> = items
+        .iter()
+        .filter_map(|i| i.label.split('(').next())
+        .collect();
+
+    assert!(
+        method_names.contains(&"fgets"),
+        "fgets (no @removed) should appear in completions. Got: {:?}",
+        method_names
+    );
+    assert!(
+        !method_names.contains(&"fgetss"),
+        "fgetss (@removed 8.0) should be filtered from completions for PHP 8.5. Got: {:?}",
+        method_names
+    );
+}
+
+/// Verify that `@removed` on a class filters out the entire class.
+/// A type-hinted parameter of a removed class should not offer completions.
+#[tokio::test]
+async fn test_removed_class_filtered_from_completion() {
+    let stub_content: &str = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @removed 8.0\n",
+        " */\n",
+        "class OCI_Lob {\n",
+        "    public function read(int $length): string {}\n",
+        "}\n",
+        "\n",
+        "class OCI_Connection {\n",
+        "    public function commit(): bool {}\n",
+        "}\n",
+    );
+
+    let mut class_stubs: std::collections::HashMap<&'static str, &'static str> =
+        std::collections::HashMap::new();
+    class_stubs.insert(
+        "OCI_Lob",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+    class_stubs.insert(
+        "OCI_Connection",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+
+    let backend = Backend::new_test_with_all_stubs(
+        class_stubs,
+        std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
+    );
+
+    // OCI_Lob is removed — should yield no member completions.
+    let uri_lob = Url::parse("file:///test_removed_lob.php").unwrap();
+    let text_lob = concat!(
+        "<?php\n",
+        "function test(OCI_Lob $l) {\n",
+        "    $l->\n",
+        "}\n",
+    );
+    let lob_items = complete_at(&backend, &uri_lob, text_lob, 2, 8).await;
+    assert!(
+        !lob_items.iter().any(|i| i.label.contains("read")),
+        "OCI_Lob (@removed 8.0) should not produce member completions for PHP 8.5. Got: {:?}",
+        lob_items.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+
+    // OCI_Connection is not removed — should yield completions.
+    let uri_conn = Url::parse("file:///test_removed_conn.php").unwrap();
+    let text_conn = concat!(
+        "<?php\n",
+        "function test(OCI_Connection $c) {\n",
+        "    $c->\n",
+        "}\n",
+    );
+    let conn_items = complete_at(&backend, &uri_conn, text_conn, 2, 8).await;
+    assert!(
+        conn_items.iter().any(|i| i.label.contains("commit")),
+        "OCI_Connection (no @removed) should produce member completions. Got: {:?}",
+        conn_items.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+}
+
+/// Verify that removed stub functions do not appear in the function name
+/// completion list (the popup the user sees when typing a function name).
+#[tokio::test]
+async fn test_removed_function_excluded_from_completion_list() {
+    let stub_content: &str = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @return string|false\n",
+        " * @removed 7.0\n",
+        " */\n",
+        "function mysql_close($link_identifier = null) {}\n",
+        "\n",
+        "/**\n",
+        " * @return array\n",
+        " */\n",
+        "function array_map(callable $callback, array $array): array {}\n",
+    );
+
+    let mut function_stubs: std::collections::HashMap<&'static str, &'static str> =
+        std::collections::HashMap::new();
+    function_stubs.insert(
+        "mysql_close",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+    function_stubs.insert(
+        "array_map",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+
+    let backend = Backend::new_test_with_all_stubs(
+        std::collections::HashMap::new(),
+        function_stubs,
+        std::collections::HashMap::new(),
+    );
+
+    let uri = Url::parse("file:///test_removed_completion.php").unwrap();
+    let text = "<?php\nmysql_\n";
+
+    let items = complete_at(&backend, &uri, text, 1, 6).await;
+    let fn_names: Vec<&str> = items
+        .iter()
+        .filter(|i| i.kind == Some(CompletionItemKind::FUNCTION))
+        .filter_map(|i| i.filter_text.as_deref().or(Some(i.label.as_str())))
+        .collect();
+
+    assert!(
+        !fn_names.iter().any(|n| n.contains("mysql_close")),
+        "mysql_close (@removed 7.0) should not appear in completions for PHP 8.5. Got: {:?}",
+        fn_names
+    );
+}
+
+/// Verify that removed stub classes do not appear in the class name
+/// completion list (e.g. when typing after `new` or in a type hint).
+#[tokio::test]
+async fn test_removed_class_excluded_from_class_name_completion() {
+    let stub_content: &str = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @removed 8.0\n",
+        " */\n",
+        "class OCI_Lob {\n",
+        "    public function read(int $length): string {}\n",
+        "}\n",
+        "\n",
+        "class OCI_Connection {\n",
+        "    public function commit(): bool {}\n",
+        "}\n",
+    );
+
+    let mut class_stubs: std::collections::HashMap<&'static str, &'static str> =
+        std::collections::HashMap::new();
+    class_stubs.insert(
+        "OCI_Lob",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+    class_stubs.insert(
+        "OCI_Connection",
+        Box::leak(stub_content.to_string().into_boxed_str()),
+    );
+
+    let backend = Backend::new_test_with_all_stubs(
+        class_stubs,
+        std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
+    );
+
+    let uri = Url::parse("file:///test_removed_class_completion.php").unwrap();
+    let text = "<?php\nfunction test(OCI\n";
+
+    let items = complete_at(&backend, &uri, text, 1, 18).await;
+    let class_names: Vec<&str> = items
+        .iter()
+        .filter_map(|i| i.filter_text.as_deref().or(Some(i.label.as_str())))
+        .collect();
+
+    assert!(
+        !class_names.iter().any(|n| n.contains("OCI_Lob")),
+        "OCI_Lob (@removed 8.0) should not appear in class name completions for PHP 8.5. Got: {:?}",
+        class_names
+    );
+    assert!(
+        class_names.iter().any(|n| n.contains("OCI_Connection")),
+        "OCI_Connection (no @removed) should appear in class name completions. Got: {:?}",
+        class_names
     );
 }

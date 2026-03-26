@@ -12,7 +12,7 @@ use crate::types::*;
 
 use super::{
     DocblockCtx, extract_hint_string, extract_parameters, is_available_for_version,
-    merge_deprecation_info,
+    is_removed_for_version, merge_deprecation_info,
 };
 
 /// Try to extract the guarded function name from a
@@ -93,6 +93,15 @@ impl Backend {
                     if let Some(ctx) = doc_ctx
                         && let Some(ver) = ctx.php_version
                         && !is_available_for_version(&func.attribute_lists, ctx, ver)
+                    {
+                        continue;
+                    }
+
+                    // Skip functions whose docblock has `@removed X.Y`
+                    // where X.Y <= the target PHP version.
+                    if let Some(ctx) = doc_ctx
+                        && let Some(ver) = ctx.php_version
+                        && is_removed_for_version(func, ctx, ver)
                     {
                         continue;
                     }

@@ -630,6 +630,66 @@ URLs, see references), though those are smaller wins.
 
 ---
 
+## P15. Two-phase stub index construction (eliminate `RwLock` on stub maps)
+
+**Impact: Low · Effort: Medium**
+
+The three stub indexes (`stub_index`, `stub_function_index`,
+`stub_constant_index`) are write-once-read-many maps. They are
+populated at construction time from the compiled-in phpstorm-stubs
+arrays, then filtered once in `set_php_version` (called during
+`initialized`) to evict entries with `@removed X.Y` tags. After
+that single mutation they are never written again.
+
+Because the PHP version is not known at construction time (it comes
+from `composer.json` / `.phpantom.toml`, read during `initialized`),
+the maps are currently wrapped in `parking_lot::RwLock` so that
+`set_php_version` can call `.write().retain(…)`. Every subsequent
+read — ~24 call sites across completion, resolution, diagnostics,
+hover, and definition — acquires a shared read lock. On the
+uncontended path this is a single atomic CAS (~1-5 ns), so the
+cost is negligible in practice, but it is architecturally wasteful
+for data that never changes after startup.
+
+### Ideal solution
+
+Split `Backend` construction into two phases so that the stub maps
+are plain `HashMap`s with zero synchronisation cost on reads:
+
+1. **Phase 1 — skeleton construction.** Create the `Backend` with
+   empty (or placeholder) stub maps. No `RwLock` needed because
+   nothing reads them yet.
+
+2. **Phase 2 — version-aware population.** In `initialized`, after
+   detecting the PHP version, build the filtered maps (applying
+   `is_stub_function_removed` / `is_stub_class_removed` during
+   construction rather than via `retain`) and store them on the
+   backend through a one-shot setter that consumes the maps by
+   value.
+
+The setter could use `std::sync::OnceLock<HashMap<…>>` (or simply
+an `UnsafeCell` behind a "set-exactly-once" assertion) to make the
+write safe without ongoing read-side cost. Alternatively, the
+fields can stay as plain `HashMap` if the `Backend` struct is built
+in `initialized` rather than `initialize` — moving construction
+after the version is known.
+
+### Prerequisites
+
+This interacts with the test helpers (`new_test`,
+`new_test_with_stubs`, etc.) which currently call
+`set_php_version` in the constructor. They would need to accept
+a `PhpVersion` parameter or build the filtered maps inline.
+
+### When to implement
+
+Low priority. The current `RwLock` overhead is unmeasurable in
+practice (~10-20 ns per completion request). Worth revisiting if
+the stub indexes grow significantly or if `Backend` construction
+is restructured for other reasons (e.g. P13 tiered storage).
+
+---
+
 ## Appendix: Profiling
 
 ### Commands
