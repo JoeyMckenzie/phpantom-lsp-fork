@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use mago_docblock::document::TagKind;
 
-use super::parser::parse_docblock;
+use super::parser::parse_docblock_for_tags;
 use super::types::{clean_type, split_type_token};
 use crate::types::{MethodInfo, ParameterInfo, Visibility};
 
@@ -315,17 +315,3 @@ fn split_params(s: &str) -> Vec<&str> {
     parts
 }
 
-// ─── Internal Helpers ───────────────────────────────────────────────────────
-
-/// Parse a docblock string into a [`DocblockInfo`] with a zero-offset span.
-fn parse_docblock_for_tags(docblock: &str) -> Option<super::parser::DocblockInfo> {
-    use mago_database::file::FileId;
-    use mago_span::Position;
-
-    let span = mago_span::Span::new(
-        FileId::zero(),
-        Position::new(0),
-        Position::new(docblock.len() as u32),
-    );
-    parse_docblock(docblock, span)
-}

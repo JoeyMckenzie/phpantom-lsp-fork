@@ -107,15 +107,18 @@ fn extract_class_docblock<'a>(
     else {
         return ClassDocblockInfo::default();
     };
+    let Some(info) = docblock::parse_docblock_for_tags(doc_text) else {
+        return ClassDocblockInfo::default();
+    };
 
-    let params_with_bounds = docblock::extract_template_params_with_bounds(doc_text);
+    let params_with_bounds = docblock::extract_template_params_with_bounds_from_info(&info);
     let template_params = params_with_bounds.iter().map(|(n, _)| n.clone()).collect();
     let template_param_bounds: HashMap<String, String> = params_with_bounds
         .into_iter()
         .filter_map(|(name, bound)| bound.map(|b| (name, b)))
         .collect();
 
-    let mixin_data = docblock::extract_mixin_tags(doc_text);
+    let mixin_data = docblock::extract_mixin_tags_from_info(&info);
     let mixins: Vec<String> = mixin_data.iter().map(|(name, _)| name.clone()).collect();
     let mixin_generics: Vec<(String, Vec<String>)> = mixin_data
         .into_iter()
@@ -123,17 +126,17 @@ fn extract_class_docblock<'a>(
         .collect();
 
     ClassDocblockInfo {
-        deprecation_message: docblock::extract_deprecation_message(doc_text),
+        deprecation_message: docblock::extract_deprecation_message_from_info(&info),
         template_params,
         template_param_bounds,
-        extends_generics: docblock::extract_generics_tag(doc_text, "@extends"),
-        implements_generics: docblock::extract_generics_tag(doc_text, "@implements"),
-        use_generics: docblock::extract_generics_tag(doc_text, "@use"),
-        type_aliases: docblock::extract_type_aliases(doc_text),
+        extends_generics: docblock::extract_generics_tag_from_info(&info, "@extends"),
+        implements_generics: docblock::extract_generics_tag_from_info(&info, "@implements"),
+        use_generics: docblock::extract_generics_tag_from_info(&info, "@use"),
+        type_aliases: docblock::extract_type_aliases_from_info(&info),
         mixins,
         mixin_generics,
-        links: docblock::extract_link_urls(doc_text),
-        see_refs: docblock::extract_see_references(doc_text),
+        links: docblock::extract_link_urls_from_info(&info),
+        see_refs: docblock::extract_see_references_from_info(&info),
         raw_docblock: Some(doc_text.to_string()),
     }
 }
@@ -1605,6 +1608,16 @@ impl Backend {
                     let is_static = method.modifiers.iter().any(|m| m.is_static());
                     let visibility = extract_visibility(method.modifiers.iter());
 
+                    // Parse the method's docblock once and reuse the
+                    // structured `DocblockInfo` across all extraction
+                    // helpers below instead of re-parsing the raw text
+                    // for every tag kind.
+                    let method_docblock_text = doc_ctx.and_then(|ctx| {
+                        docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, method)
+                    });
+                    let method_docblock_info =
+                        method_docblock_text.and_then(docblock::parse_docblock_for_tags);
+
                     // Look up the PHPDoc `@return` tag (if any) and apply
                     // type override logic.  Also extract PHPStan conditional
                     // return types if present.  Also check for `@deprecated`.
@@ -1619,11 +1632,8 @@ impl Backend {
                         method_template_params,
                         method_template_param_bounds,
                         method_template_bindings,
-                    ) = if let Some(ctx) = doc_ctx {
-                        let docblock_text =
-                            docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, method);
-
-                        let doc_type = docblock_text.and_then(docblock::extract_return_type);
+                    ) = if let Some(ref info) = method_docblock_info {
+                        let doc_type = docblock::extract_return_type_from_info(info);
 
                         let effective = docblock::resolve_effective_type(
                             native_return_type.as_deref(),
@@ -1631,14 +1641,12 @@ impl Backend {
                         );
 
                         let conditional =
-                            docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, method)
-                                .and_then(docblock::extract_conditional_return_type);
+                            docblock::extract_conditional_return_type_from_info(info);
 
                         // Extract method-level @template params, their bounds,
                         // and @param bindings for generic type substitution.
-                        let tpl_params_with_bounds = docblock_text
-                            .map(docblock::extract_template_params_with_bounds)
-                            .unwrap_or_default();
+                        let tpl_params_with_bounds =
+                            docblock::extract_template_params_with_bounds_from_info(info);
                         let tpl_params: Vec<String> = tpl_params_with_bounds
                             .iter()
                             .map(|(n, _)| n.clone())
@@ -1648,11 +1656,7 @@ impl Backend {
                             .filter_map(|(n, b)| b.map(|b| (n, b)))
                             .collect();
                         let tpl_bindings = if !tpl_params.is_empty() {
-                            docblock_text
-                                .map(|doc| {
-                                    docblock::extract_template_param_bindings(doc, &tpl_params)
-                                })
-                                .unwrap_or_default()
+                            docblock::extract_template_param_bindings_from_info(info, &tpl_params)
                         } else {
                             Vec::new()
                         };
@@ -1672,14 +1676,11 @@ impl Backend {
                             && tpl_bindings.is_empty()
                             && !class_template_params.is_empty()
                         {
-                            let class_bindings = docblock_text
-                                .map(|doc| {
-                                    docblock::extract_template_param_bindings(
-                                        doc,
-                                        class_template_params,
-                                    )
-                                })
-                                .unwrap_or_default();
+                            let class_bindings =
+                                docblock::extract_template_param_bindings_from_info(
+                                    info,
+                                    class_template_params,
+                                );
                             if !class_bindings.is_empty() {
                                 (class_template_params.to_vec(), class_bindings)
                             } else {
@@ -1698,9 +1699,8 @@ impl Backend {
                         // becomes a conditional that resolves T from the
                         // call-site argument (e.g. find(User::class) → User).
                         let conditional = conditional.or_else(|| {
-                            let doc = docblock_text?;
-                            docblock::synthesize_template_conditional(
-                                doc,
+                            docblock::synthesize_template_conditional_from_info(
+                                info,
                                 &tpl_params,
                                 effective.as_deref(),
                                 false,
@@ -1708,7 +1708,7 @@ impl Backend {
                         });
 
                         let depr_info = merge_deprecation_info(
-                            docblock_text.and_then(docblock::extract_deprecation_message),
+                            docblock::extract_deprecation_message_from_info(info),
                             &method.attribute_lists,
                             doc_ctx,
                         );
@@ -1744,11 +1744,6 @@ impl Backend {
                     // (e.g. `@param list<User> $users` vs native `array $users`).
                     // We apply `resolve_effective_type()` to pick the winner.
                     if name == "__construct" {
-                        // Fetch the constructor docblock once for all promoted params.
-                        let constructor_docblock = doc_ctx.and_then(|ctx| {
-                            docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, method)
-                        });
-
                         for param in method.parameter_list.parameters.iter() {
                             if param.is_promoted_property() {
                                 let raw_name = param.variable.name.to_string();
@@ -1779,9 +1774,9 @@ impl Backend {
                                         native_hint.as_deref(),
                                         Some(&var_type),
                                     )
-                                } else if let Some(doc) = constructor_docblock {
+                                } else if let Some(ref info) = method_docblock_info {
                                     let param_doc_type =
-                                        docblock::extract_param_raw_type(doc, &raw_name);
+                                        docblock::extract_param_raw_type_from_info(info, &raw_name);
                                     docblock::resolve_effective_type(
                                         native_hint.as_deref(),
                                         param_doc_type.as_deref(),
@@ -1824,13 +1819,10 @@ impl Backend {
                     // `callable(User): void` are preserved.  This mirrors
                     // the promoted-property logic already used for
                     // constructor parameters.
-                    if let Some(ctx) = doc_ctx
-                        && let Some(doc_text) =
-                            docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, method)
-                    {
+                    if let Some(ref info) = method_docblock_info {
                         for param in &mut parameters {
                             let param_doc_type =
-                                docblock::extract_param_raw_type(doc_text, &param.name);
+                                docblock::extract_param_raw_type_from_info(info, &param.name);
                             if let Some(ref doc_type) = param_doc_type {
                                 let effective = docblock::resolve_effective_type(
                                     param.type_hint.as_deref(),
@@ -1847,7 +1839,7 @@ impl Backend {
                         // inside a closure argument resolves to the
                         // declared type instead of the lexical class.
                         for (this_type, param_name) in
-                            docblock::extract_param_closure_this(doc_text)
+                            docblock::extract_param_closure_this_from_info(info)
                         {
                             if let Some(param) =
                                 parameters.iter_mut().find(|p| p.name == param_name)
@@ -1860,10 +1852,12 @@ impl Backend {
                         // native parameter.  These document parameters
                         // accessed via `func_get_args()` or similar
                         // mechanisms and should appear in hover/signature.
-                        for (tag_name, tag_type) in docblock::extract_all_param_tags(doc_text) {
+                        for (tag_name, tag_type) in
+                            docblock::extract_all_param_tags_from_info(info)
+                        {
                             if !parameters.iter().any(|p| p.name == tag_name) {
                                 let description =
-                                    docblock::extract_param_description(doc_text, &tag_name);
+                                    docblock::extract_param_description_from_info(info, &tag_name);
                                 parameters.push(ParameterInfo {
                                     name: tag_name,
                                     is_required: false,
@@ -1883,29 +1877,32 @@ impl Backend {
 
                     // Extract description, return description, link, and
                     // per-parameter descriptions from the method's docblock.
-                    let method_docblock_text = doc_ctx.and_then(|ctx| {
-                        docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, method)
-                    });
-
+                    // The raw text is still needed for
+                    // `extract_docblock_description` which does its own
+                    // free-text parsing; the structured `info` is used
+                    // for all tag-based extractions.
                     let method_description = method_docblock_text
                         .and_then(|doc| crate::hover::extract_docblock_description(Some(doc)));
 
-                    let return_description =
-                        method_docblock_text.and_then(docblock::extract_return_description);
+                    let return_description = method_docblock_info
+                        .as_ref()
+                        .and_then(docblock::extract_return_description_from_info);
 
-                    let links = method_docblock_text
-                        .map(docblock::extract_link_urls)
+                    let links = method_docblock_info
+                        .as_ref()
+                        .map(docblock::extract_link_urls_from_info)
                         .unwrap_or_default();
 
-                    let see_refs = method_docblock_text
-                        .map(docblock::extract_see_references)
+                    let see_refs = method_docblock_info
+                        .as_ref()
+                        .map(docblock::extract_see_references_from_info)
                         .unwrap_or_default();
 
                     // Populate per-parameter descriptions from `@param` tags.
-                    if let Some(doc_text) = method_docblock_text {
+                    if let Some(ref info) = method_docblock_info {
                         for param in &mut parameters {
                             param.description =
-                                docblock::extract_param_description(doc_text, &param.name);
+                                docblock::extract_param_description_from_info(info, &param.name);
                         }
                     }
 
@@ -1913,15 +1910,17 @@ impl Backend {
                     // assertion tags from the method's docblock so that
                     // the narrowing engine can apply type guards from
                     // static method calls like `Assert::instanceOf($v, Foo::class)`.
-                    let type_assertions = method_docblock_text
-                        .map(docblock::extract_type_assertions)
+                    let type_assertions = method_docblock_info
+                        .as_ref()
+                        .map(docblock::extract_type_assertions_from_info)
                         .unwrap_or_default();
 
                     // Extract `@throws` tags so that cross-file throws
                     // propagation can look up which exceptions a method
                     // declares without needing access to the source text.
-                    let throws = method_docblock_text
-                        .map(docblock::extract_throws_tags)
+                    let throws = method_docblock_info
+                        .as_ref()
+                        .map(docblock::extract_throws_tags_from_info)
                         .unwrap_or_default();
 
                     methods.push(MethodInfo {
@@ -1980,8 +1979,13 @@ impl Backend {
                         && let Some(doc_text) =
                             docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, member)
                     {
-                        let docblock_msg = docblock::extract_deprecation_message(doc_text);
-                        let see_refs = docblock::extract_see_references(doc_text);
+                        let info = docblock::parse_docblock_for_tags(doc_text);
+                        let docblock_msg =
+                            info.as_ref().and_then(docblock::extract_deprecation_message_from_info);
+                        let see_refs = info
+                            .as_ref()
+                            .map(docblock::extract_see_references_from_info)
+                            .unwrap_or_default();
                         if !see_refs.is_empty() {
                             for prop in &mut prop_infos {
                                 prop.see_refs = see_refs.clone();
@@ -2008,7 +2012,9 @@ impl Backend {
                                 prop.deprecated_replacement = Some(repl.clone());
                             }
                         }
-                        if let Some(doc_type) = docblock::extract_var_type(doc_text) {
+                        if let Some(doc_type) =
+                            info.as_ref().and_then(docblock::extract_var_type_from_info)
+                        {
                             for prop in &mut prop_infos {
                                 prop.type_hint = docblock::resolve_effective_type(
                                     prop.type_hint.as_deref(),
@@ -2054,15 +2060,19 @@ impl Backend {
                     let const_docblock_text = doc_ctx.and_then(|ctx| {
                         docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, member)
                     });
+                    let const_docblock_info =
+                        const_docblock_text.and_then(docblock::parse_docblock_for_tags);
                     let depr_info = {
-                        let docblock_msg =
-                            const_docblock_text.and_then(docblock::extract_deprecation_message);
+                        let docblock_msg = const_docblock_info
+                            .as_ref()
+                            .and_then(docblock::extract_deprecation_message_from_info);
                         merge_deprecation_info(docblock_msg, &constant.attribute_lists, doc_ctx)
                     };
                     let deprecation_message = depr_info.message;
                     let constant_deprecated_replacement = depr_info.replacement;
-                    let const_see_refs = const_docblock_text
-                        .map(docblock::extract_see_references)
+                    let const_see_refs = const_docblock_info
+                        .as_ref()
+                        .map(docblock::extract_see_references_from_info)
                         .unwrap_or_default();
                     let const_description = const_docblock_text
                         .and_then(|doc| crate::hover::extract_docblock_description(Some(doc)));

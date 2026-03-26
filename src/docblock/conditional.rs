@@ -11,8 +11,11 @@
 //! evaluate at call-sites by matching the actual argument types against
 //! the declared conditions.
 
+use mago_docblock::document::TagKind;
+
 use crate::types::{ConditionalReturnType, ParamCondition};
 
+use super::parser::{collapse_newlines, parse_docblock_for_tags, DocblockInfo};
 use super::types::clean_type;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -28,8 +31,12 @@ use super::types::clean_type;
 /// Returns `None` if the `@return` tag is missing or is not a conditional
 /// (i.e. does not start with `(`).
 pub fn extract_conditional_return_type(docblock: &str) -> Option<ConditionalReturnType> {
-    // Collect the full @return content across multiple lines.
-    let raw = extract_raw_return_content(docblock)?;
+    extract_conditional_return_type_from_info(&parse_docblock_for_tags(docblock)?)
+}
+
+/// Like [`extract_conditional_return_type`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_conditional_return_type_from_info(info: &DocblockInfo) -> Option<ConditionalReturnType> {
+    let raw = extract_raw_return_content_from_info(info)?;
     let trimmed = raw.trim();
     if !trimmed.starts_with('(') {
         return None;
@@ -39,62 +46,24 @@ pub fn extract_conditional_return_type(docblock: &str) -> Option<ConditionalRetu
 
 // ─── Internals ──────────────────────────────────────────────────────────────
 
-/// Extract the raw content after `@return` from a (possibly multi-line)
-/// docblock, joining continuation lines.
+/// Extract the raw content after `@return` from a pre-parsed docblock.
 ///
-/// For a conditional return type spanning multiple lines the content after
-/// `@return` is concatenated (with a single space between lines) until the
-/// parentheses are balanced or a new tag is encountered.
-fn extract_raw_return_content(docblock: &str) -> Option<String> {
-    let inner = docblock
-        .trim()
-        .strip_prefix("/**")
-        .unwrap_or(docblock)
-        .strip_suffix("*/")
-        .unwrap_or(docblock);
+/// mago-docblock already handles `/** */` stripping, leading `*`
+/// removal, and multi-line tag continuation.  The description is
+/// returned with internal `\n` normalised to spaces so that downstream
+/// parsers see a single-line string (matching the old behaviour of
+/// joining continuation lines with spaces).
+fn extract_raw_return_content_from_info(info: &DocblockInfo) -> Option<String> {
+    let tag = info
+        .first_tag_by_kind(TagKind::PhpstanReturn)
+        .or_else(|| info.first_tag_by_kind(TagKind::Return))?;
 
-    let mut collecting = false;
-    let mut parts: Vec<String> = Vec::new();
-    let mut paren_depth: i32 = 0;
-
-    for line in inner.lines() {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-
-        if !collecting {
-            if let Some(rest) = trimmed.strip_prefix("@return") {
-                let rest = rest.trim_start();
-                if rest.is_empty() {
-                    continue;
-                }
-                collecting = true;
-                paren_depth += rest.chars().filter(|&c| c == '(').count() as i32;
-                paren_depth -= rest.chars().filter(|&c| c == ')').count() as i32;
-                parts.push(rest.to_string());
-                if paren_depth <= 0 {
-                    break;
-                }
-            }
-        } else {
-            // Stop if we hit another tag
-            if trimmed.starts_with('@') {
-                break;
-            }
-            if trimmed.is_empty() {
-                continue;
-            }
-            paren_depth += trimmed.chars().filter(|&c| c == '(').count() as i32;
-            paren_depth -= trimmed.chars().filter(|&c| c == ')').count() as i32;
-            parts.push(trimmed.to_string());
-            if paren_depth <= 0 {
-                break;
-            }
-        }
-    }
-
-    if parts.is_empty() {
+    let desc = tag.description.trim();
+    if desc.is_empty() {
         return None;
     }
-    Some(parts.join(" "))
+
+    Some(collapse_newlines(desc))
 }
 
 /// Parse a conditional expression string into a [`ConditionalReturnType`].

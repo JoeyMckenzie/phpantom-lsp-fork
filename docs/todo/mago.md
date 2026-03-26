@@ -15,9 +15,14 @@ long-term maintenance burden.
 
 | Crate              | Replaces                                               | Effort      |
 | ------------------ | ------------------------------------------------------ | ----------- |
-| `mago-docblock`    | `src/docblock/tags.rs` + tag extraction logic           | Medium      |
+| `mago-docblock`    | Manual docblock parsing scattered across the codebase   | Medium-High |
 | `mago-type-syntax` | `src/docblock/{type_strings,generics,shapes,callable_types,conditional}.rs` + string-based type pipeline | Very High |
 | `mago-names`       | `src/parser/use_statements.rs` + `use_map` resolution   | Medium-High |
+
+`mago-docblock` is already a dependency — the core `src/docblock/`
+module uses it for all tag extraction. The remaining work (M2) is
+migrating the **rest** of the codebase that still does hand-rolled
+docblock parsing.
 
 A fifth crate, `mago-reporting`, comes in as a transitive dependency
 of `mago-semantics` and `mago-names`. It does not replace any
@@ -34,137 +39,212 @@ PHPantom code but will appear in `Cargo.toml`.
 
 ---
 
-## Sprint placement
+## M2. Deeper `mago-docblock` integration
 
-The migration goes between Sprint 4 (Refactoring toolkit) and
-Sprint 5 (Polish for office adoption). This is the latest safe
-point: Sprint 5 introduces workspace symbols, auto-import,
-diagnostics for unknown classes/members, and implement-interface —
-all of which touch name resolution, docblock parsing, and type
-resolution. Sprint 6 (Type intelligence depth) directly manipulates
-type strings. Sprint 7 (Laravel excellence) and Sprint 8 (Blade
-support) both depend heavily on the subsystems being replaced.
+**What it replaces:** Manual `/** */` stripping, `*`-prefix scanning,
+and `@tag`-matching code scattered across modules that have not yet
+adopted the centralised `DocblockInfo` / `parse_docblock_for_tags`
+infrastructure in `src/docblock/parser.rs`.
 
-Building any of those features on the old string-based code and then
-migrating afterward would mean rewriting them twice. Building them on
-the new foundation means they benefit from structured types from day
-one.
+**Why it matters:** The core `src/docblock/` module is fully migrated,
+but at least **8 other modules** still contain hand-rolled docblock
+parsers — each reimplementing the same `trim_start_matches('*')` +
+`strip_prefix("@tag")` pattern. This creates maintenance burden,
+inconsistent behaviour, and missed bug fixes (e.g. multi-line tag
+handling, `@phpstan-*` variant support).
 
-```
-Sprint 3  — Bug fixes                    (no migration dependency)
-Sprint 4  — Refactoring toolkit           (no migration dependency)
-Sprint 4a — Mago Foundation: Composer + Docblock + Names  ← NEW
-Sprint 4b — Mago Foundation: Type Syntax  ← NEW
-Sprint 5  — Polish for office adoption    (built on new foundation)
-Sprint 6  — Type intelligence depth       (built on new foundation)
-Sprint 7  — Laravel excellence            (built on new foundation)
-Sprint 8  — Blade support                 (built on new foundation)
-```
+**Relationship to M3/M4:** Independent. Can be done before, after, or
+in parallel with either. Items are ordered by impact.
 
-Sprint 4a and 4b are separated because type-syntax is a
-significantly larger migration that depends on docblock and names
-being in place first. Each sub-sprint should be roughly 1–2 weeks.
+### Cross-cutting prerequisites
 
-Add to `docs/todo.md` after Sprint 4:
+These changes to `DocblockInfo` / `TagInfo` in `src/docblock/parser.rs`
+unlock multiple items below and should be done first.
 
-```
-## Sprint 4a — Mago foundation: Composer + Docblock + Names
+A. **Extend `DocblockInfo` with description text.**
+   `collect_tags()` currently discards `Element::Text` from the
+   mago-docblock `Document`. Add a `description: Option<String>`
+   field that captures the free-text content before the first tag.
+   This eliminates the most widely used manual parser
+   (`extract_docblock_description` in `hover/formatting.rs`, called
+   from 6+ sites).  The HTML-to-Markdown conversion (`<b>` → `**`
+   etc.) remains as a ~10-line post-processing step.
 
-| #   | Item                                                        | Impact | Effort      |
-| --- | ----------------------------------------------------------- | ------ | ----------- |
-|     | Clear [refactoring gate](todo/refactor.md)                  | —      | —           |
-| M2  | [Migrate to mago-docblock](todo/mago.md#m2-mago-docblock)   | High   | Medium      |
-| M3  | [Migrate to mago-names](todo/mago.md#m3-mago-names)         | High   | Medium-High |
+B. **Extend `TagInfo` with span information.**
+   Add `span: Span` to `TagInfo` by preserving it from
+   `mago_docblock::document::Tag`. This is the key enabler for
+   migrating `symbol_map/docblock.rs` — the module needs precise
+   byte offsets for every type reference within docblocks so that
+   go-to-definition, find-references, and semantic tokens work
+   inside `/** */` comments.
 
-## Sprint 4b — Mago foundation: Type Syntax
+C. **Consolidate docblock locators.**
+   There are **5 separate implementations** of "find the docblock
+   for this function/node":
 
-| #   | Item                                                              | Impact   | Effort    |
-| --- | ----------------------------------------------------------------- | -------- | --------- |
-|     | Clear [refactoring gate](todo/refactor.md)                        | —        | —         |
-| M4  | [Migrate to mago-type-syntax](todo/mago.md#m4-mago-type-syntax)  | Critical | Very High |
-```
+   1. `get_docblock_text_for_node` (`docblock/tags.rs`) — trivia-based, canonical
+   2. `find_docblock_start_for_node` (`code_actions/update_docblock.rs`) — duplicate of #1
+   3. `find_enclosing_docblock` (`code_actions/phpstan/add_throws.rs`) — raw-text backward scan
+   4. `find_docblock_above_line` (`code_actions/phpstan/remove_throws.rs`) — raw-text backward scan
+   5. `find_method_docblock` (`hover/variable_type.rs`) — raw-text backward scan
 
----
+   Variants #3–5 exist because their callers start from a byte
+   offset or diagnostic line rather than an AST node. A shared
+   utility that can work from either starting point would eliminate
+   this duplication. Also unify the three incompatible docblock-info
+   structs (`FunctionWithDocblock`, `DocblockInfo` in add_throws,
+   `DocblockAbove`) into the canonical `DocblockInfo` from
+   `parser.rs`.
 
-## M2. Migrate to `mago-docblock`
+### High-impact items
 
-**What it replaces:** Tag extraction logic in `src/docblock/tags.rs`,
-`src/docblock/templates.rs`, and `src/docblock/virtual_members.rs`
-that used line-by-line string scanning.
+1. **Migrate `symbol_map/docblock.rs` (~1,360 lines).**
+   Impact: **High**.  Effort: **High**.  Depends on: prerequisite B.
 
-**What it does NOT replace:** The type expression parsing inside tag
-descriptions (that is M4). After this step, we still extract the raw
-description string from tags and process it with our existing
-string-based type code. The structured type migration happens in M4.
+   The single largest manual docblock parser in the project. It
+   reimplements line-by-line tag scanning for ~26 tag names,
+   multi-line type joining with offset maps, tag position validation,
+   and a 423-line recursive type string decomposer (`emit_type_spans`)
+   — all to produce `SymbolSpan` entries with file-level byte offsets
+   for go-to-definition and semantic tokens within docblocks.
 
-### Remaining
+   After prerequisite B adds spans to `TagInfo`, this module could
+   parse docblocks with `parse_docblock()` (which already calls
+   `mago_docblock::parse_phpdoc_with_span`) and iterate the
+   structured `TagInfo` entries instead of scanning raw lines.
+   The `emit_type_spans` function would remain largely unchanged
+   (it parses type *strings*, which is an M4 concern), but the
+   ~400 lines of tag scanning, `is_tag_position`, and
+   `join_multiline_type` would be eliminated.
 
-These are optional follow-up items that would benefit from being
-rewritten to use mago-docblock but are not blocking M3 or M4.
+2. **Migrate `code_actions/update_docblock.rs` (~660 lines of parsing).**
+   Impact: **High**.  Effort: **Medium**.  Depends on: prerequisite A.
 
-6. **Migrate `extract_conditional_return_type` in `conditional.rs`.**
-   Still uses manual `/** */` stripping and line-by-line scanning in
-   `extract_raw_return_content()` to collect multi-line `@return`
-   content. Could use `parse_docblock_for_tags` + `TagKind::Return`
-   to get the description directly (mago-docblock already joins
-   multi-line tag content). The conditional expression parser itself
-   (`parse_conditional_expr`) would stay unchanged.
+   The "Update docblock to match signature" code action has its own
+   complete docblock parser:
+   - `parse_doc_params()` (~80 lines) — hand-parses `@param` tags
+   - `parse_doc_return()` (~40 lines) — hand-parses `@return`
+   - `parse_doc_throws()` (~20 lines) — hand-parses `@throws`
+   - `parse_docblock_lines()` (~80 lines) — categorizes lines into
+     a `DocLine` enum (Open, Close, Text, Param, Return, OtherTag)
+   - `find_docblock_start_for_node()` — duplicates
+     `get_docblock_text_for_node`
 
-7. **Migrate `get_docblock_text_for_node` callers to use
-   `parse_docblock_trivia` directly.**
-   Currently ~15 call sites in `parser/classes.rs`,
-   `parser/functions.rs`, `parser/mod.rs`, and
-   `code_actions/generate_constructor.rs` follow the pattern:
-   `get_docblock_text_for_node(trivia, content, node)` →
-   `extract_*(raw_text)`. Each call parses the docblock twice: once
-   to find the trivia token, once inside the extraction function.
-   These could call `parse_docblock_trivia` once and pass the
-   `DocblockInfo` to extraction functions, or the extraction
-   functions could accept `&DocblockInfo` directly. This is a
-   performance improvement and API cleanup, not a correctness fix.
+   The parsing functions can be replaced with
+   `parse_docblock_for_tags()` + `_from_info` variants.
+   `parse_docblock_lines` can be replaced by iterating
+   `DocblockInfo.tags` plus the new `description` field from
+   prerequisite A. Docblock *generation/rebuilding* (~200 lines)
+   would still need custom code, but operating on a structured model
+   would make it more robust than the current `prev_was_param` /
+   `prev_was_text_or_empty` boolean tracking.
 
-8. **Update `DocblockCtx` to carry parsed `DocblockInfo`.**
-   `DocblockCtx` in `src/parser/mod.rs` carries trivia, content, and
-   context for docblock extraction during AST walks. It could carry a
-   lazily-parsed `DocblockInfo` so that multiple tag extractions from
-   the same docblock share a single parse. This pairs naturally with
-   item 7.
+3. **Migrate `hover/formatting.rs` — `extract_docblock_description`.**
+   Impact: **High** (called from 6+ sites).  Effort: **Low**.
+   Depends on: prerequisite A.
 
-9. **Source-scanning functions are out of scope.**
-   `find_inline_var_docblock`, `find_var_raw_type_in_source`,
-   `find_iterable_raw_type_in_source`, and
-   `find_enclosing_return_type` scan backward through raw source
-   text looking for docblocks by byte offset. These are not
-   tag-extraction functions and cannot benefit from mago-docblock.
-   Type-level helpers (`should_override_type`,
-   `resolve_effective_type`, `is_compatible_refinement`) are type
-   logic, not parsing.
+   Currently does manual `/** */` stripping, line-by-line `*`-prefix
+   scanning, and collects free text before the first `@tag`. After
+   prerequisite A adds `description` to `DocblockInfo`, this becomes
+   a simple field read + the existing HTML-to-Markdown conversion.
 
-### Notes
+   Also migrate `extract_var_description` — can use `TagKind::Var` +
+   `tag.description` to eliminate the stripping/scanning; splitting
+   type from description still needs `skip_type_token` until M4.
 
-- mago-docblock joins multi-line tag descriptions with `\n` rather
-  than spaces. The migrated functions normalise `\n` → space where
-  the old code joined continuation lines with spaces (descriptions,
-  type extraction). This preserves existing behaviour.
+### Medium-impact items
 
-- `@phpstan-extends`, `@phpstan-implements`, and `@phpstan-use` are
-  not recognised as dedicated `TagKind` variants by mago-docblock
-  (they become `TagKind::Other`). `extract_generics_tag` handles
-  this with a name-based fallback that checks `tag.name`.
+4. **Migrate `code_actions/phpstan/add_throws.rs` & `remove_throws.rs`.**
+   Impact: **Medium**.  Effort: **Medium**.  Depends on: prerequisite C.
 
-- `@removed` is similarly `TagKind::Other`; matched by name in
-  `extract_removed_version`.
+   Each file has its own backward-scanning docblock locator and its
+   own incompatible docblock-info struct. Manual `@throws` tag
+   scanning can be replaced with `parse_docblock_for_tags()` +
+   `extract_throws_tags_from_info()`.
 
-### Performance note
+   Docblock *generation* (inserting a `@throws` line into an
+   existing docblock, creating a new docblock, converting
+   single-line → multi-line, removing a specific `@throws` line)
+   still needs custom code, but the *reading* side becomes trivial.
 
-`mago-docblock` allocates into a bumpalo arena. For the current
-approach (parse then immediately flatten to owned strings), we create
-and drop an arena per docblock. This is fine — bumpalo arena creation
-is a pointer bump, and the arena is dropped at the end of each
-extraction call. When M4 introduces structured types, the arena
-lifetime may be extended to match the type's lifetime. The follow-up
-items (7, 8) would reduce redundant parsing by sharing a single
-`DocblockInfo` across multiple extractions from the same docblock.
+5. **Migrate `completion/phpdoc/mod.rs` — existing tag detection.**
+   Impact: **Medium**.  Effort: **Low**.
+
+   Three functions (`find_existing_param_tags`,
+   `has_existing_return_tag`, `find_existing_throws_tags`) manually
+   scan docblocks for existing tags to avoid duplicates during
+   completion. Once the raw `/** … */` text is obtained, use
+   `parse_docblock_for_tags()` instead of line-by-line scanning.
+
+   **Caveat:** These operate on *incomplete* docblocks (the user is
+   still typing; `*/` may not exist yet). Need to verify
+   mago-docblock handles partial input gracefully or keep a fallback.
+
+6. **Migrate `completion/source/throws_analysis.rs` — `@throws` extraction.**
+   Impact: **Medium**.  Effort: **Low**.
+
+   `find_inline_throws_annotations` and `find_method_throws_tags`
+   locate docblocks by byte offset (custom scanning — must stay),
+   then manually parse `@throws` tags. The tag extraction can
+   delegate to `extract_throws_tags_from_info()`.
+
+7. **Migrate `diagnostics/mod.rs` — `scope_has_throws_tag`.**
+   Impact: **Medium**.  Effort: **Low**.
+
+   Manual line-by-line `@throws` scanning within an already-extracted
+   docblock string. Direct replacement with
+   `parse_docblock_for_tags()` +
+   `extract_throws_tags_from_info()`.
+
+8. **Migrate `definition/member/file_lookup.rs` — `@property`/`@method` position lookup.**
+   Impact: **Low-Medium**.  Effort: **Low**.
+
+   Manual `trim_start_matches('*')` + `starts_with("@property-read")`
+   for finding member definition positions in docblocks. Could use
+   `parse_docblock_for_tags()` with `TagKind::PropertyRead` etc.
+
+### Not applicable
+
+- **Source-scanning functions** in `docblock/tags.rs`
+  (`find_var_raw_type_in_source`, `find_iterable_raw_type_in_source`)
+  — complexity is in scope-aware backward scanning, not content
+  parsing. Two already delegate to mago-docblock; the other two do
+  minimal content parsing.
+
+- **Cursor-position modules** (`completion/source/comment_position.rs`,
+  `completion/phpdoc/context.rs`) — classify cursor position relative
+  to comment boundaries; handle incomplete input during typing.
+
+- **Consumer-only modules** (`signature_help.rs`, `document_symbols.rs`,
+  `inlay_hints.rs`, `folding.rs`, `document_links.rs`,
+  `diagnostics/deprecated.rs`) — read pre-extracted data from
+  `ClassInfo`, `MethodInfo`, `ParameterInfo` etc. No direct docblock
+  parsing.
+
+### Effort estimate
+
+| Prerequisite / Item | Lines eliminated (approx.) | Effort |
+| -------------------- | ------------------------- | ------ |
+| A. Description in `DocblockInfo` | — (enabler) | Low |
+| B. Spans in `TagInfo` | — (enabler) | Low |
+| C. Consolidate locators | ~150 | Medium |
+| 1. `symbol_map/docblock.rs` | ~800 | High |
+| 2. `update_docblock.rs` | ~300 | Medium |
+| 3. `hover/formatting.rs` | ~100 | Low |
+| 4. `add_throws.rs` + `remove_throws.rs` | ~200 | Medium |
+| 5–8. Smaller targets | ~150 | Low each |
+| **Total** | **~1,700** | **Medium-High** |
+
+### Implementation notes
+
+- `collapse_newlines` in `parser.rs` normalises multi-line tag
+  descriptions (`\n` + surrounding indentation → single space),
+  skipping insertion next to structural delimiters `<>{}()`.
+- `@phpstan-extends`, `@phpstan-implements`, `@phpstan-use`, and
+  `@removed` are `TagKind::Other`; matched by `tag.name` fallback.
+- The `_from_info` API (already in place) eliminates redundant
+  parsing by sharing a single `DocblockInfo` across multiple
+  extractions from the same docblock.
 
 ---
 
@@ -290,10 +370,11 @@ Requires restructuring how we store per-file name resolution data.
 
 ### Interaction with M2
 
-M2 (mago-docblock) and M3 (mago-names) are independent — neither
-depends on the other. They can be done in parallel or in either
-order. M3 is listed second because it touches more call sites and
-has a larger blast radius.
+M2 (deeper mago-docblock integration) and M3 (mago-names) are
+independent — neither depends on the other. They can be done in
+parallel or in either order. M2 items 1–3 (the highest-impact ones)
+are recommended before M3 since they reduce manual docblock code that
+M3's name-resolution changes would otherwise need to work around.
 
 ### Interaction with M4
 
@@ -314,315 +395,228 @@ return type like `HasMany<Post, $this>` needs both FQN resolution
 **What it replaces:** The string-based type pipeline — approximately
 4,700 lines across:
 
-- `src/docblock/type_strings.rs` (584 lines) — `clean_type`,
-  `split_type_token`, `base_class_name`, `strip_nullable`,
-  `normalize_nullable`, `strip_generics`, `is_scalar`, etc.
-- `src/docblock/generics.rs` (228 lines) — `extract_generic_value_type`,
-  `extract_generic_key_type`, `extract_iterable_element_type`
-- `src/docblock/shapes.rs` (372 lines) — `parse_array_shape`,
-  `parse_object_shape`, `extract_array_shape_value_type`
-- `src/docblock/callable_types.rs` (290 lines) —
-  `extract_callable_return_type`, `extract_callable_param_types`
-- `src/docblock/conditional.rs` (214 lines) —
-  `extract_conditional_return_type`, conditional type tree parsing
-- `src/completion/types/resolution.rs` (463 lines) —
-  `type_hint_to_classes`, `apply_generic_args`, generic substitution
-- `src/completion/types/conditional.rs` (519 lines) — conditional
-  return type resolution
-- `src/completion/types/narrowing.rs` (1,906 lines) — `is_subtype_of`,
-  type comparison, instanceof narrowing (type manipulation portions)
-- `src/inheritance.rs` (1,094 lines) — `apply_substitution`,
-  `apply_substitution_to_method`, `apply_substitution_to_property`
+- `src/docblock/type_strings.rs` (~630 lines — `split_type_token`,
+  `split_union_depth0`, `clean_type`, `base_class_name`,
+  `replace_self_in_type`, etc.)
+- `src/docblock/generics.rs` (~230 lines — `parse_generic_args`,
+  `extract_generic_value_type`, etc.)
+- `src/docblock/shapes.rs` (~340 lines — `parse_array_shape`,
+  `parse_object_shape`, etc.)
+- `src/docblock/callable_types.rs` (~290 lines —
+  `extract_callable_return_type`, `extract_callable_param_types`, etc.)
+- `src/docblock/conditional.rs` (~215 lines —
+  `extract_conditional_return_type`, `parse_conditional_expr`)
+- Scattered `split_type_token` / `split_union_depth0` calls
+  throughout `src/hover/`, `src/completion/`, `src/resolution.rs`,
+  and `src/symbol_map/docblock.rs`.
 
-Plus scattered string-type manipulation in the Laravel virtual member
-providers.
+**Why:** Every type in the system is `Option<String>`. Consumers
+decompose these strings with hand-written depth-tracking parsers
+(counting `<>`, `{}`, `()` nesting) at every use site. This is
+fragile, repetitive, and makes it impossible to add features like
+conditional-type evaluation, generic type substitution, or type
+compatibility checks without yet more string surgery.
 
-**Why:** This is the highest-maintenance, most bug-prone code in
-PHPantom. Every new PHPStan type feature (conditional types, template
-constraints, array shapes with spreads, `key-of`, `value-of`) requires
-extending hand-written string parsers. `mago-type-syntax` is a proper
-lexer + parser that handles the full PHPStan/Psalm type expression
-grammar including edge cases we don't support today (int ranges,
-`properties-of`, indexed access types, literal types, negated types).
+`mago-type-syntax` provides `PhpType` — a structured enum that
+represents unions, intersections, generics, callables, shapes,
+conditionals, etc. as a tree. One parse at extraction time; pattern
+matching everywhere else.
 
-**This is the big one.** It touches nearly every module and changes
-the fundamental type representation from strings to AST nodes. The
-migration must be done in carefully ordered phases to keep the test
-suite green at every step.
-
-**Risk:** High — largest blast radius of any migration. Mitigated by
-the phased approach and the fact that every phase is independently
-testable.
+**Risk:** Very high blast radius. Every struct that carries a type
+field (`ParameterInfo::type_hint`, `MethodInfo::return_type`,
+`PropertyInfo::type_hint`, `ConditionalReturnType::Concrete`, etc.)
+is affected. The phased approach below is designed to make this
+manageable.
 
 ### Phase 1: Introduce the type representation
 
-**Goal:** Define PHPantom's internal type representation backed by
-`mago-type-syntax`, with bidirectional conversion to/from strings.
-No existing code changes behaviour.
+**Goal:** Define `PhpType`, implement `PhpType::parse()` and
+`PhpType::to_string()`, and prove they round-trip correctly against
+the existing string pipeline. No existing code changes.
 
-1. **Add `mago-type-syntax` to `Cargo.toml`.**
+1. Add `mago-type-syntax` to `Cargo.toml`.
 
-2. **Create `src/types/php_type.rs` — the internal type enum.**
-   Define a PHPantom-owned type representation that wraps or mirrors
-   the `mago_type_syntax::ast::Type` variants we care about. This is
-   an owned, arena-free type that can live in `ClassInfo`,
-   `MethodInfo`, `PropertyInfo`, etc.
+2. Create `src/types/php_type.rs`:
+   ```
+   pub enum PhpType {
+       Named(String),                  // e.g. "int", "App\\User"
+       Nullable(Box<PhpType>),         // ?T
+       Union(Vec<PhpType>),            // T|U
+       Intersection(Vec<PhpType>),     // T&U
+       Generic(String, Vec<PhpType>),  // Collection<int, User>
+       Array(Box<PhpType>),            // T[]
+       ArrayShape(Vec<ShapeEntry>),    // array{name: string, age: int}
+       ObjectShape(Vec<ShapeEntry>),   // object{name: string}
+       Callable {                      // callable(T): U
+           params: Vec<PhpType>,
+           return_type: Option<Box<PhpType>>,
+       },
+       Conditional {                   // ($x is T ? U : V)
+           param: String,
+           condition: Box<PhpType>,
+           then_type: Box<PhpType>,
+           else_type: Box<PhpType>,
+       },
+       ClassString(Option<Box<PhpType>>),  // class-string<T>
+       KeyOf(Box<PhpType>),            // key-of<T>
+       ValueOf(Box<PhpType>),          // value-of<T>
+       Raw(String),                    // fallback for unparseable strings
+   }
+   ```
 
-   Start with a minimal enum covering the types PHPantom already
-   handles:
+3. Implement `PhpType::parse(s: &str) -> PhpType` using
+   `mago_type_syntax::parse_str()` to parse into the crate's AST,
+   then convert to our `PhpType`. The `Raw(String)` variant is the
+   fallback for anything the parser rejects — this guarantees the
+   function never fails.
 
-   - `Scalar(ScalarKind)` — int, string, float, bool, null, void, never, mixed
-   - `Reference { fqn: String, generic_args: Vec<PhpType> }`
-   - `Union(Vec<PhpType>)`
-   - `Intersection(Vec<PhpType>)`
-   - `Nullable(Box<PhpType>)`
-   - `Array { key: Option<Box<PhpType>>, value: Option<Box<PhpType>> }`
-   - `Shape { entries: Vec<ShapeEntry>, sealed: bool }`
-   - `Callable { params: Vec<CallableParam>, return_type: Option<Box<PhpType>> }`
-   - `Conditional { param: String, condition: ParamCondition, then: Box<PhpType>, otherwise: Box<PhpType> }`
-   - `Slice(Box<PhpType>)` — `T[]`
-   - `Variable { name: String, scope: TemplateScope }` — `$this`,
-     template variables. The scope distinguishes class-level `T` from
-     method-level `T` on the same class. PHPStan identifies template
-     types by name + scope (`TemplateTypeScope`); without this,
-     a method declaring its own `@template T` that shadows the
-     class's `T` would produce incorrect substitutions.
-   - `ClassString(Option<Box<PhpType>>)` — `class-string<T>`
-   - `KeyOf(Box<PhpType>)`, `ValueOf(Box<PhpType>)`
-   - `Static`, `Self_`, `Parent`
-   - `Literal(LiteralKind)` — literal ints, strings, bools
+4. Implement `PhpType::to_string() -> String` so we can convert back
+   to the string representation for display (hover, completion
+   detail, etc.).
 
-   This does not need to cover every `mago_type_syntax::ast::Type`
-   variant on day one. Unknown variants map to a `Raw(String)`
-   fallback that preserves the original string.
-
-3. **Implement `PhpType::parse(input: &str) -> PhpType`.**
-   Calls `mago_type_syntax::parse_str()` and converts the resulting
-   AST into `PhpType`. Unknown or unsupported AST variants become
-   `PhpType::Raw(input.to_string())`.
-
-4. **Implement `PhpType::to_string() -> String`.**
-   Renders the type back to a display string. This is needed for
-   hover, completion detail, signature help, and anywhere we
-   currently show type strings to the user.
-
-5. **Write thorough unit tests.**
-   Round-trip tests: parse a type string, convert to `PhpType`,
-   render back to string. Cover every variant including edge cases:
-   - `array{name: string, age?: int, ...}`
-   - `Closure(int, string): bool`
-   - `($x is string ? int : float)`
-   - `Collection<int, User>|null`
-   - `non-empty-array<string, mixed>`
-   - `callable(list<int>, ?Closure(): void=, int...): ((A&B)|null)`
-   - `key-of<MyArray>`
-   - `T[][]`
+5. Write round-trip tests: for every type string in the existing test
+   suite, assert `PhpType::parse(s).to_string() == s` (or a
+   canonically equivalent form).
 
 ### Phase 2: Dual representation on core types
 
-**Goal:** Add `PhpType` fields alongside existing `String` fields on
-`MethodInfo`, `PropertyInfo`, `FunctionInfo`, `ParameterInfo`. Both
-representations are kept in sync. Existing code continues to read
-strings; new code can read structured types.
+**Goal:** Add `_parsed: Option<PhpType>` fields alongside existing
+string fields on the core types. Populate them at extraction time.
+No consumers change yet.
 
-1. **Add optional `PhpType` fields to info structs.**
-   For example, on `MethodInfo`:
+1. Add `return_type_parsed: Option<PhpType>` to `MethodInfo`.
+2. Add `type_hint_parsed: Option<PhpType>` to `ParameterInfo`.
+3. Add `type_hint_parsed: Option<PhpType>` to `PropertyInfo`.
+4. Add `type_hint_parsed: Option<PhpType>` to `ConstantInfo`.
+5. Populate these fields in `src/parser/classes.rs` and
+   `src/parser/functions.rs` by calling `PhpType::parse()` on the
+   existing string value.
 
-   ```
-   pub return_type: Option<String>,        // existing
-   pub return_type_parsed: Option<PhpType>, // new — always in sync
-   ```
-
-   On `PropertyInfo`:
-
-   ```
-   pub type_hint: Option<String>,
-   pub type_hint_parsed: Option<PhpType>,
-   ```
-
-   And similarly for `native_return_type`, `ParameterInfo::type_hint`,
-   etc.
-
-2. **Populate `_parsed` fields at extraction time.**
-   In `src/parser/classes.rs` and `src/parser/functions.rs`, wherever
-   we set a `type_hint` or `return_type` string, also call
-   `PhpType::parse()` and store the result. This is the single point
-   of truth — the string and the parsed type are always created
-   together.
-
-3. **Update `signature_eq` to compare `_parsed` fields.**
-   Structured comparison is more correct than string comparison
-   (e.g. `int|string` and `string|int` are equivalent types but
-   different strings).
-
-4. **Run the full test suite.** Nothing should change behaviourally —
-   the `_parsed` fields are written but not yet read by any
-   production code path.
+At this point, every extracted type has both representations. Old
+code keeps reading the string field; new code can read the parsed
+field.
 
 ### Phase 3: Migrate consumers to structured types
 
-**Goal:** Module by module, switch from reading `type_hint: String`
-to reading `type_hint_parsed: PhpType`. This is the bulk of the work.
+**Goal:** Replace string-based type manipulation with `PhpType`
+pattern matching, one module at a time. After each module is
+migrated, its string-field reads are removed.
 
-Migrate in this order (least coupled → most coupled):
+Modules in recommended migration order (least dependencies first):
 
-1. **`src/docblock/generics.rs`** — Replace `extract_generic_value_type`,
-   `extract_generic_key_type`, `extract_iterable_element_type` with
-   pattern matches on `PhpType::Reference { generic_args, .. }` and
-   `PhpType::Array { value, .. }`.
+1. **`src/hover/`** — Type display. Replace `split_type_token` /
+   `clean_type` chains with `PhpType::to_string()` formatting.
 
-2. **`src/docblock/shapes.rs`** — Replace `parse_array_shape`,
-   `extract_array_shape_value_type`, `parse_object_shape` with
-   pattern matches on `PhpType::Shape { entries, .. }`.
+2. **`src/completion/`** — Type matching for member access. Replace
+   `base_class_name` / `extract_generic_value_type` chains with
+   `PhpType::Generic` / `PhpType::Named` pattern matching.
 
-3. **`src/docblock/callable_types.rs`** — Replace
-   `extract_callable_return_type`, `extract_callable_param_types`
-   with pattern matches on `PhpType::Callable { .. }`.
+3. **`src/resolution.rs`** — `resolve_type_string`. Replace the
+   string-surgery approach (split on `|`, recurse, rejoin) with
+   tree traversal on `PhpType`.
 
-4. **`src/docblock/conditional.rs`** — Replace
-   `extract_conditional_return_type` with pattern match on
-   `PhpType::Conditional { .. }`. Rewrite `ConditionalReturnType`
-   to hold `PhpType` instead of strings.
+4. **`src/docblock/types.rs` and sub-modules** — The old string
+   parsers. Once all consumers use `PhpType`, these become dead code
+   and can be deleted.
 
-5. **`src/completion/types/resolution.rs`** — Rewrite
-   `type_hint_to_classes` to accept `PhpType` instead of `&str`.
-   Rewrite `apply_generic_args` to substitute `PhpType` nodes
-   instead of string-replace. This is the most impactful single
-   change — it's the bridge between types and class resolution.
+5. **`src/symbol_map/docblock.rs`** — `emit_type_spans`. Replace the
+   423-line recursive string decomposer with `PhpType` tree
+   traversal + span emission. (This depends on M2 item 1 for the
+   tag-level migration; the type-level migration is M4.)
 
-6. **`src/inheritance.rs`** — Rewrite `apply_substitution` and its
-   variants to operate on `PhpType` trees instead of string
-   find-and-replace. Template parameters become `PhpType::Variable`
-   nodes; substitution is a recursive tree transform.
+6. **`src/diagnostics/`** — Type compatibility checks. Pattern match
+   on `PhpType` variants instead of string prefix checks.
 
-7. **`src/completion/types/narrowing.rs`** — Rewrite `is_subtype_of`
-   and type comparison functions to operate on `PhpType`. Instanceof
-   narrowing produces a new `PhpType::Reference` instead of a string.
-
-8. **`src/completion/types/conditional.rs`** — Rewrite conditional
-   return type resolution to evaluate `PhpType::Conditional` trees.
-
-9. **`src/hover/`** — Update hover rendering to use
-   `PhpType::to_string()` instead of raw type strings.
-
-10. **`src/signature_help.rs`** — Update parameter type display.
-
-11. **`src/inlay_hints.rs`** — Update inlay hint type display.
-
-After each module is migrated, run the full test suite.
+7. **`src/code_actions/`** — Type-aware refactorings. Use `PhpType`
+   for type comparison, docblock generation, etc.
 
 ### Phase 4: Migrate the Laravel provider
 
-**Goal:** Rewrite the Laravel virtual member providers to produce and
-consume `PhpType` instead of strings.
+The Laravel provider (`src/laravel/`) has its own type manipulation
+for Eloquent models, relationships, collections, and facades.
 
-1. **`src/virtual_members/laravel/relationships.rs`** — Relationship
-   type inference. Instead of parsing `HasMany<Post, $this>` as a
-   string and extracting generic args with `find('<')`, receive a
-   `PhpType::Reference { fqn: "HasMany", generic_args: [Reference("Post"), Variable("$this")] }`
-   and pattern-match on it.
+1. **Eloquent attribute types** — Replace string-based cast-type
+   mapping with `PhpType` construction.
 
-2. **`src/virtual_members/laravel/builder.rs`** — Builder return type
-   mapping. Instead of string-replacing `static` → `Builder<Model>`,
-   do a tree transform on `PhpType`.
+2. **Relationship return types** — Replace the string template
+   `"HasMany<{model}>"` with `PhpType::Generic("HasMany",
+   [PhpType::Named(model)])`.
 
-3. **`src/virtual_members/laravel/casts.rs`** — Cast type resolution.
-   `cast_type_to_php_type` returns a `PhpType` instead of a string.
+3. **Collection generics** — Replace `format!("Collection<{},
+   {}>", key, value)` with `PhpType::Generic` construction.
 
-4. **`src/virtual_members/laravel/scopes.rs`** — Scope method
-   synthesis. Parameter and return types are `PhpType`.
-
-5. **`src/virtual_members/laravel/accessors.rs`** — Accessor type
-   extraction. Returns `PhpType`.
-
-6. **`src/virtual_members/laravel/factory.rs`** — Factory method
-   synthesis. Return types are `PhpType`.
-
-7. **`src/virtual_members/phpdoc.rs`** — PHPDoc virtual member
-   provider. `@method` and `@property` tag types are parsed into
-   `PhpType` via `mago-docblock` + `mago-type-syntax`.
+4. **Facade accessor resolution** — The `getFacadeAccessor` →
+   class lookup produces a class name string. This stays as a string
+   (it's a class name, not a type expression), but the *return type*
+   it produces can be `PhpType::Named`.
 
 ### Phase 5: Remove string type fields
 
-**Goal:** Remove the old `String`-based type fields and the
-`docblock/type_strings.rs` helper module.
+Once all consumers read `_parsed` fields:
 
-1. **Remove `return_type: Option<String>` and friends.**
-   Rename `return_type_parsed` → `return_type`. All consumers now
-   use `PhpType`.
-
-2. **Delete `src/docblock/type_strings.rs`** (584 lines).
-
-3. **Delete `src/docblock/generics.rs`** (228 lines) — replaced by
-   `PhpType` pattern matching.
-
-4. **Delete `src/docblock/shapes.rs`** (372 lines).
-
-5. **Delete `src/docblock/callable_types.rs`** (290 lines).
-
-6. **Delete `src/docblock/conditional.rs`** (214 lines).
-
-7. **Update `PhpType::Raw(String)` fallback.**
-   Grep for any remaining `PhpType::Raw` usage. Each instance is a
-   type expression we haven't properly handled yet. Either add
-   support or document it as a known limitation.
-
-8. **Final test suite run.** Everything green = migration complete.
+1. Remove `return_type: Option<String>` from `MethodInfo` (rename
+   `return_type_parsed` → `return_type`).
+2. Remove `type_hint: Option<String>` from `ParameterInfo`,
+   `PropertyInfo`, `ConstantInfo` (rename similarly).
+3. Remove `native_return_type: Option<String>` /
+   `native_type_hint: Option<String>` — these become
+   `PhpType::Named` values populated from the AST hint.
+4. Delete `src/docblock/type_strings.rs`, `generics.rs`, `shapes.rs`,
+   `callable_types.rs` — the old string parsers.
+5. Delete `ConditionalReturnType` enum (replaced by
+   `PhpType::Conditional`).
+6. Run the full test suite.
 
 ---
 
 ## Testing strategy
 
-Each migration step must leave the test suite green. The primary
-verification tools are:
+Each migration step (M2, M3, M4) must pass the **full existing test
+suite** before merging. This is the primary safety net.
 
-- **`tests/` fixture runner** — end-to-end tests that exercise
-  completion, hover, go-to-definition, diagnostics, code actions,
-  and signature help against PHP fixture files. These are the
-  ultimate correctness check.
+Additional testing per migration:
 
-- **Unit tests** — each new module (`php_type.rs`, `names.rs`,
-  `composer_mago.rs`, docblock adapter) gets its own unit tests
-  covering round-trip correctness and edge cases.
+| Migration | Extra tests |
+| --------- | ----------- |
+| M2 | Integration tests for each migrated module (code actions, completion, hover, diagnostics) to verify docblock tag extraction produces identical results. |
+| M3 | Snapshot tests comparing `use_map`-based resolution with `OwnedResolvedNames`-based resolution across the fixture corpus. |
+| M4 | Round-trip tests (`PhpType::parse(s).to_string() == s`) for every type string in the test suite. Per-module migration tests comparing old string-based output with new `PhpType`-based output. |
 
-- **`example.php`** — the project's showcase file that exercises
-  every type intelligence feature. Open it in an editor after each
-  phase and verify that completion, hover, and go-to-definition
-  work as expected.
-
-For M4 specifically, the dual-representation approach (Phase 2)
-means we can add structured types without removing string types.
-This gives us a safety net: if a structured-type consumer produces
-wrong results, we can compare against the string-type consumer to
-debug.
+For M4 specifically, the dual-representation phase (Phase 2) enables
+**shadow testing**: compute the result both ways and assert they
+match, before removing the old path. This catches regressions without
+blocking progress.
 
 ---
 
 ## Version alignment
 
-All mago crates should be pinned to the same version. Current
-dependencies use 1.14. The new crates (`mago-composer`,
-`mago-docblock`, `mago-type-syntax`, `mago-names`) should use the
-same version. If upgrading is needed to get bug fixes or features,
-upgrade all mago crates together in a single commit.
+All Mago crates should be pinned to the same release. At the time of
+writing, the latest version is **1.15.x**. When upgrading, update all
+Mago crates in a single commit and run the test suite.
+
+The `mago-docblock` crate is already present in `Cargo.toml`. When
+adding `mago-type-syntax` and `mago-names`, align them to the same
+version.
 
 ---
 
 ## What this enables
 
-Once the migration is complete, several roadmap items become
-significantly easier:
+Once M2 + M3 + M4 are complete:
 
-| Roadmap item | How the migration helps |
-| --- | --- |
-| T7 (`key-of<T>` / `value-of<T>`) | `PhpType::KeyOf` and `PhpType::ValueOf` are first-class variants — just add resolution logic. |
-| T2 (`@phpstan-type` aliases) | Type aliases map a name to a `PhpType`. Substitution is a tree transform. |
-| T3 (`@phpstan-import-type`) | Same — cross-file alias resolution becomes FQN lookup + `PhpType` storage. |
-| C2 (`#[ArrayShape]` return shapes) | Build a `PhpType::Shape` directly from attribute data. |
-| L1 (Facade completion) | Preserve full `PhpType` from the concrete class instead of flattening to `@method static` strings. |
-| L4 (Custom Eloquent builders) | Resolve `HasBuilder<X>` as `PhpType::Reference { generic_args: [X] }` and extract X structurally. |
-| BL1 (Blade support) | Blade variable types (`$loop` as `object{index: int, ...}`) are `PhpType::Shape` values, not hand-built strings. |
-| Sprint 6 (Type intelligence depth) | Every item in Sprint 6 involves type manipulation. Structured types make all of them easier and more correct. |
+- **Structured types everywhere.** No more string surgery for type
+  manipulation. Generic substitution, conditional evaluation, and
+  type compatibility checks become tree operations.
 
-The migration is a one-time cost that pays dividends across every
-future sprint.
+- **Correct name resolution.** Every identifier resolves to its FQN
+  in a single pass. Auto-import and unused-import diagnostics become
+  straightforward.
+
+- **Foundation for advanced features.** Laravel Eloquent attribute
+  completion, Blade template support, and PHPStan-level type
+  inference all require structured types and correct name resolution.
+  Building them on the new foundation avoids double work.
+
+- **Reduced maintenance burden.** ~6,500+ lines of hand-written
+  parsers replaced by well-tested upstream crates.

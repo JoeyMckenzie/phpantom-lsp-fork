@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use mago_docblock::document::TagKind;
 
-use super::parser::parse_docblock;
+use super::parser::{collapse_newlines, parse_docblock_for_tags, DocblockInfo};
 use super::types::{split_generic_args, split_type_token};
 use crate::types::{ConditionalReturnType, ParamCondition, TemplateVariance};
 
@@ -34,6 +34,14 @@ pub fn extract_template_params(docblock: &str) -> Vec<String> {
         .collect()
 }
 
+/// Like [`extract_template_params`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_template_params_from_info(info: &DocblockInfo) -> Vec<String> {
+    extract_template_params_full_from_info(info)
+        .into_iter()
+        .map(|(name, _, _)| name)
+        .collect()
+}
+
 /// Extract template parameter names **and** their optional upper bounds
 /// from `@template` tags in a docblock.
 ///
@@ -45,6 +53,16 @@ pub fn extract_template_params(docblock: &str) -> Vec<String> {
 /// Returns a list of `(name, optional_bound)` pairs.
 pub fn extract_template_params_with_bounds(docblock: &str) -> Vec<(String, Option<String>)> {
     extract_template_params_full(docblock)
+        .into_iter()
+        .map(|(name, bound, _)| (name, bound))
+        .collect()
+}
+
+/// Like [`extract_template_params_with_bounds`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_template_params_with_bounds_from_info(
+    info: &DocblockInfo,
+) -> Vec<(String, Option<String>)> {
+    extract_template_params_full_from_info(info)
         .into_iter()
         .map(|(name, bound, _)| (name, bound))
         .collect()
@@ -64,7 +82,13 @@ pub fn extract_template_params_full(
     let Some(info) = parse_docblock_for_tags(docblock) else {
         return Vec::new();
     };
+    extract_template_params_full_from_info(&info)
+}
 
+/// Like [`extract_template_params_full`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_template_params_full_from_info(
+    info: &DocblockInfo,
+) -> Vec<(String, Option<String>, TemplateVariance)> {
     /// Map a `TagKind` to the corresponding `TemplateVariance`.
     const fn variance_for(kind: TagKind) -> TemplateVariance {
         match kind {
@@ -144,6 +168,18 @@ pub fn extract_template_param_bindings(
         return Vec::new();
     };
 
+    extract_template_param_bindings_from_info(&info, template_params)
+}
+
+/// Like [`extract_template_param_bindings`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_template_param_bindings_from_info(
+    info: &DocblockInfo,
+    template_params: &[String],
+) -> Vec<(String, String)> {
+    if template_params.is_empty() {
+        return Vec::new();
+    }
+
     let mut results = Vec::new();
 
     for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
@@ -222,6 +258,14 @@ pub fn extract_generics_tag(docblock: &str, tag: &str) -> Vec<(String, Vec<Strin
         return Vec::new();
     };
 
+    extract_generics_tag_from_info(&info, tag)
+}
+
+/// Like [`extract_generics_tag`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_generics_tag_from_info(
+    info: &DocblockInfo,
+    tag: &str,
+) -> Vec<(String, Vec<String>)> {
     // Map the tag string to the corresponding TagKinds.
     // For `@extends` we also accept `@phpstan-extends` and `@template-extends`.
     // Note: `@phpstan-extends`, `@phpstan-implements`, and `@phpstan-use`
@@ -275,7 +319,7 @@ fn parse_generics_from_description(desc: &str) -> Option<(String, Vec<String>)> 
     }
 
     // mago-docblock joins multi-line descriptions with \n; normalise.
-    let normalised = desc.replace('\n', " ");
+    let normalised = collapse_newlines(desc);
 
     // Extract the full type token (e.g. `Collection<int, Language>`),
     // respecting `<…>` nesting.
@@ -326,6 +370,11 @@ pub fn extract_type_aliases(docblock: &str) -> HashMap<String, String> {
         return HashMap::new();
     };
 
+    extract_type_aliases_from_info(&info)
+}
+
+/// Like [`extract_type_aliases`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_type_aliases_from_info(info: &DocblockInfo) -> HashMap<String, String> {
     let mut aliases = HashMap::new();
 
     // ── Local type alias: @phpstan-type / @psalm-type ──
@@ -336,7 +385,7 @@ pub fn extract_type_aliases(docblock: &str) -> HashMap<String, String> {
         }
 
         // mago-docblock joins multi-line descriptions with \n; normalise.
-        let normalised = desc.replace('\n', " ");
+        let normalised = collapse_newlines(desc);
 
         // Split into alias name and definition.
         // Format: `AliasName = Definition` or `AliasName Definition`
@@ -496,6 +545,44 @@ pub fn synthesize_template_conditional(
     })
 }
 
+/// Like [`synthesize_template_conditional`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn synthesize_template_conditional_from_info(
+    info: &DocblockInfo,
+    template_params: &[String],
+    return_type: Option<&str>,
+    has_existing_conditional: bool,
+) -> Option<ConditionalReturnType> {
+    // Don't override an existing conditional return type.
+    if has_existing_conditional {
+        return None;
+    }
+
+    if template_params.is_empty() {
+        return None;
+    }
+
+    let ret = return_type?;
+
+    // Strip nullable prefix so that `?T` matches template param `T`.
+    let stripped = ret.strip_prefix('?').unwrap_or(ret);
+
+    // Check if the (stripped) return type is one of the template params.
+    if !template_params.iter().any(|t| t == stripped) {
+        return None;
+    }
+
+    // Find a `@param class-string<T> $paramName` annotation for this
+    // template param, and extract the parameter name (without `$`).
+    let param_name = find_class_string_param_name_from_info(info, stripped)?;
+
+    Some(ConditionalReturnType::Conditional {
+        param_name,
+        condition: ParamCondition::ClassString,
+        then_type: Box::new(ConditionalReturnType::Concrete("mixed".into())),
+        else_type: Box::new(ConditionalReturnType::Concrete("mixed".into())),
+    })
+}
+
 /// Search a docblock for a `@param class-string<T> $paramName` annotation
 /// where `T` matches the given `template_name`.
 ///
@@ -509,6 +596,14 @@ pub fn synthesize_template_conditional(
 fn find_class_string_param_name(docblock: &str, template_name: &str) -> Option<String> {
     let info = parse_docblock_for_tags(docblock)?;
 
+    find_class_string_param_name_from_info(&info, template_name)
+}
+
+/// Like [`find_class_string_param_name`], but operates on a pre-parsed [`DocblockInfo`].
+fn find_class_string_param_name_from_info(
+    info: &DocblockInfo,
+    template_name: &str,
+) -> Option<String> {
     let pattern = format!("class-string<{}>", template_name);
 
     for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
@@ -554,19 +649,4 @@ fn find_class_string_param_name(docblock: &str, template_name: &str) -> Option<S
     }
 
     None
-}
-
-// ─── Internal Helpers ───────────────────────────────────────────────────────
-
-/// Parse a docblock string into a [`DocblockInfo`] with a zero-offset span.
-fn parse_docblock_for_tags(docblock: &str) -> Option<super::parser::DocblockInfo> {
-    use mago_database::file::FileId;
-    use mago_span::Position;
-
-    let span = mago_span::Span::new(
-        FileId::zero(),
-        Position::new(0),
-        Position::new(docblock.len() as u32),
-    );
-    parse_docblock(docblock, span)
 }

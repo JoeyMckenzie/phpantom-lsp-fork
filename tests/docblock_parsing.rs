@@ -404,16 +404,23 @@ fn return_type_multiline_brace_shape() {
 
 #[test]
 fn return_type_unclosed_angle_recovers_base() {
-    // A docblock where the closing `>` is simply missing — we should
-    // recover the base type rather than returning a broken string.
+    // A docblock where the closing `>` is simply missing —
+    // `extract_return_type` returns the raw (broken) token;
+    // `resolve_effective_type` performs the actual recovery.
     let doc = concat!("/**\n", " * @return SomeType<\n", " */",);
-    assert_eq!(extract_return_type(doc), Some("SomeType".into()));
+    let raw = extract_return_type(doc);
+    assert_eq!(raw, Some("SomeType<".into()));
+    let recovered = resolve_effective_type(None, raw.as_deref());
+    assert_eq!(recovered, Some("SomeType".into()));
 }
 
 #[test]
 fn return_type_unclosed_angle_static_recovers() {
     let doc = concat!("/**\n", " * @return static<\n", " */",);
-    assert_eq!(extract_return_type(doc), Some("static".into()));
+    let raw = extract_return_type(doc);
+    assert_eq!(raw, Some("static<".into()));
+    let recovered = resolve_effective_type(None, raw.as_deref());
+    assert_eq!(recovered, Some("static".into()));
 }
 
 // ── resolve_effective_type fallback ─────────────────────────────────

@@ -23,6 +23,7 @@ within the same impact tier.
 
 | #   | Item                                                                                                | Impact   | Effort      |
 | --- | --------------------------------------------------------------------------------------------------- | -------- | ----------- |
+| M2  | [Deeper mago-docblock integration](todo/mago.md#m2-deeper-mago-docblock-integration)                | High     | Medium-High |
 | M3  | [Migrate to mago-names](todo/mago.md#m3-mago-names)                                                 | High     | Medium-High |
 | M4  | [Migrate to mago-type-syntax](todo/mago.md#m4-mago-type-syntax)                                     | Critical | Very High   |
 | A2  | [Extract function](todo/actions.md#a2-extract-function-refactoring)                                 | High     | High        |

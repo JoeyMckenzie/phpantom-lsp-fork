@@ -35,7 +35,7 @@ use mago_syntax::ast::Trivia;
 /// This captures the tag name, kind, and description as owned `String`s
 /// so callers do not need to worry about arena lifetimes.
 #[derive(Debug, Clone)]
-pub(crate) struct TagInfo {
+pub struct TagInfo {
     /// The raw tag name (e.g. `"param"`, `"return"`, `"deprecated"`).
     pub name: String,
     /// The structured tag kind from `mago-docblock`.
@@ -52,7 +52,7 @@ pub(crate) struct TagInfo {
 /// Text elements, code blocks, and annotations are discarded for now
 /// since our existing code does not use them.
 #[derive(Debug, Clone)]
-pub(crate) struct DocblockInfo {
+pub struct DocblockInfo {
     /// All tags found in the docblock, in source order.
     pub tags: Vec<TagInfo>,
 }
@@ -87,7 +87,7 @@ impl DocblockInfo {
 ///   When the caller does not have span information (e.g. unit tests that
 ///   work with standalone strings), pass [`Span::default()`] or a
 ///   zero-offset span.
-pub(crate) fn parse_docblock(docblock: &str, base_span: Span) -> Option<DocblockInfo> {
+pub fn parse_docblock(docblock: &str, base_span: Span) -> Option<DocblockInfo> {
     let arena = Bump::new();
 
     // `parse_phpdoc_with_span` requires `content: &'arena str`.
@@ -130,12 +130,53 @@ fn collect_tags(document: &mago_docblock::document::Document<'_>) -> DocblockInf
     DocblockInfo { tags }
 }
 
-/// Convenience: parse a raw docblock string with a default (zero) span.
+/// Collapse `\n` (and any surrounding horizontal whitespace) into a
+/// single space.
 ///
-/// Useful in tests and call sites that do not have source-file position
-/// information.
-#[cfg(test)]
-pub(crate) fn parse_docblock_quick(docblock: &str) -> Option<DocblockInfo> {
+/// mago-docblock joins multi-line tag descriptions with `\n`, but the
+/// continuation lines may carry leading whitespace from the source
+/// indentation.  The old line-by-line scanner trimmed each line before
+/// joining with a space; this helper reproduces that behaviour.
+pub fn collapse_newlines(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\n' {
+            // Trim trailing whitespace already appended
+            let trimmed_len = out.trim_end().len();
+            out.truncate(trimmed_len);
+            // Skip leading whitespace on the next line
+            while chars.peek().is_some_and(|&ch| ch == ' ' || ch == '\t') {
+                chars.next();
+            }
+            // Decide whether a separating space is needed.  Skip the
+            // space when the last emitted character is a structural
+            // opener (`<`, `{`, `(`) or when the next character is a
+            // structural closer (`>`, `}`, `)`, `,`, `:`) — these
+            // tokens are already unambiguous without whitespace and
+            // the old line-by-line scanner never inserted spaces in
+            // these positions.
+            let last_ch = out.chars().last();
+            let next_ch = chars.peek().copied();
+            let skip_space = matches!(last_ch, Some('<' | '{' | '('))
+                || matches!(next_ch, Some('>' | '}' | ')'));
+            if !out.is_empty() && !out.ends_with(' ') && !skip_space {
+                out.push(' ');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Parse a raw docblock string into a [`DocblockInfo`] with a zero-offset span.
+///
+/// This is the standard entry point for all tag extraction functions that
+/// receive a raw `&str` docblock.  The span is set to cover the entire
+/// string starting at offset 0, which is correct for standalone extraction
+/// (the spans are only meaningful when the caller needs source positions).
+pub fn parse_docblock_for_tags(docblock: &str) -> Option<DocblockInfo> {
     use mago_database::file::FileId;
     use mago_span::Position;
 
@@ -156,7 +197,7 @@ mod tests {
     #[test]
     fn parse_simple_return_tag() {
         let doc = "/** @return string */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         assert_eq!(info.tags.len(), 1);
         assert_eq!(info.tags[0].kind, TagKind::Return);
         assert_eq!(info.tags[0].description, "string");
@@ -169,7 +210,7 @@ mod tests {
          * @param int $age The age
          * @return bool
          */"#;
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         assert_eq!(info.tags.len(), 3);
 
         assert_eq!(info.tags[0].kind, TagKind::Param);
@@ -185,7 +226,7 @@ mod tests {
     #[test]
     fn parse_deprecated_tag_bare() {
         let doc = "/** @deprecated */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Deprecated)
             .expect("should have deprecated");
@@ -195,7 +236,7 @@ mod tests {
     #[test]
     fn parse_deprecated_tag_with_message() {
         let doc = "/** @deprecated Use newMethod() instead */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Deprecated)
             .expect("should have deprecated");
@@ -205,7 +246,7 @@ mod tests {
     #[test]
     fn parse_mixin_tag() {
         let doc = "/** @mixin \\App\\Models\\User */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Mixin)
             .expect("should have mixin");
@@ -215,7 +256,7 @@ mod tests {
     #[test]
     fn parse_throws_tag() {
         let doc = "/** @throws \\InvalidArgumentException When input is bad */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Throws)
             .expect("should have throws");
@@ -228,7 +269,7 @@ mod tests {
     #[test]
     fn parse_var_tag() {
         let doc = "/** @var array<int, string> $items */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Var)
             .expect("should have var");
@@ -238,7 +279,7 @@ mod tests {
     #[test]
     fn parse_see_tag() {
         let doc = "/** @see MyClass::method() */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::See)
             .expect("should have see");
@@ -251,7 +292,7 @@ mod tests {
          * @phpstan-assert string $value
          * @phpstan-assert-if-true non-empty-string $value
          */"#;
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let kinds: Vec<TagKind> = info.tags.iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
@@ -266,7 +307,7 @@ mod tests {
          * @return int
          * @param bool $b
          */"#;
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
 
         let params: Vec<_> = info.tags_by_kind(TagKind::Param).collect();
         assert_eq!(params.len(), 2);
@@ -284,7 +325,7 @@ mod tests {
          * @psalm-assert string $y
          * @param bool $z
          */"#;
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
 
         let asserts: Vec<_> = info
             .tags_by_kinds(&[TagKind::PhpstanAssert, TagKind::PsalmAssert])
@@ -294,9 +335,9 @@ mod tests {
 
     #[test]
     fn invalid_docblock_returns_none() {
-        assert!(parse_docblock_quick("/* not a docblock */").is_none());
-        assert!(parse_docblock_quick("// not a docblock").is_none());
-        assert!(parse_docblock_quick("").is_none());
+        assert!(parse_docblock_for_tags("/* not a docblock */").is_none());
+        assert!(parse_docblock_for_tags("// not a docblock").is_none());
+        assert!(parse_docblock_for_tags("").is_none());
     }
 
     #[test]
@@ -305,7 +346,7 @@ mod tests {
          * @template T
          * @template-covariant TValue of object
          */"#;
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
 
         let templates: Vec<_> = info
             .tags_by_kinds(&[TagKind::Template, TagKind::TemplateCovariant])
@@ -324,7 +365,7 @@ mod tests {
          * @property-read int $id
          * @property-write bool $active
          */"#;
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
 
         assert_eq!(info.tags.len(), 3);
         assert_eq!(info.tags[0].kind, TagKind::Property);
@@ -335,7 +376,7 @@ mod tests {
     #[test]
     fn parse_method_tag() {
         let doc = "/** @method static Builder query() */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Method)
             .expect("should have method");
@@ -350,7 +391,7 @@ mod tests {
          *   age: int
          * } $data
          */"#;
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Param)
             .expect("should have param");
@@ -362,7 +403,7 @@ mod tests {
     #[test]
     fn parse_link_tag() {
         let doc = "/** @link https://php.net/array_map */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Link)
             .expect("should have link");
@@ -372,7 +413,7 @@ mod tests {
     #[test]
     fn parse_extends_tag() {
         let doc = "/** @extends Collection<int, User> */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Extends)
             .expect("should have extends");
@@ -382,7 +423,7 @@ mod tests {
     #[test]
     fn parse_phpstan_type_tag() {
         let doc = "/** @phpstan-type Money = array{amount: int, currency: string} */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::PhpstanType)
             .expect("should have type");
@@ -392,7 +433,7 @@ mod tests {
     #[test]
     fn parse_phpstan_import_type_tag() {
         let doc = "/** @phpstan-import-type Money from PriceCalculator */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::PhpstanImportType)
             .expect("should have import-type");
@@ -403,7 +444,7 @@ mod tests {
     #[test]
     fn parse_param_closure_this_tag() {
         let doc = "/** @param-closure-this \\App\\Route $callback */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::ParamClosureThis)
             .expect("should have param-closure-this");
@@ -417,7 +458,7 @@ mod tests {
         // since it has no dedicated variant. Our extract_generics_tag
         // handles this via a name-based fallback.
         let doc = "/**\n * @phpstan-extends Collection<int, User>\n */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         assert_eq!(info.tags.len(), 1);
         assert_eq!(info.tags[0].kind, TagKind::Other);
         assert_eq!(info.tags[0].name, "phpstan-extends");
@@ -427,7 +468,7 @@ mod tests {
     #[test]
     fn multiline_return_description_uses_newlines() {
         let doc = "/**\n * @return array an array containing all the elements of arr1\n * after applying the callback function to each one.\n */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Return)
             .expect("should have return");
@@ -442,7 +483,7 @@ mod tests {
     fn multiline_type_in_return_tag() {
         let doc =
             "/**\n * @return array{\n *   name: string,\n *   age: int\n * } the user data\n */";
-        let info = parse_docblock_quick(doc).expect("should parse");
+        let info = parse_docblock_for_tags(doc).expect("should parse");
         let tag = info
             .first_tag_by_kind(TagKind::Return)
             .expect("should have return");

@@ -23,7 +23,7 @@ use mago_syntax::ast::*;
 
 use crate::types::{AssertionKind, PhpVersion, TypeAssertion};
 
-use super::parser::parse_docblock;
+use super::parser::{collapse_newlines, parse_docblock_for_tags, DocblockInfo};
 use super::types::{
     base_class_name, clean_type, is_scalar, normalize_nullable, split_type_token, strip_nullable,
 };
@@ -45,6 +45,11 @@ pub fn extract_return_type(docblock: &str) -> Option<String> {
     extract_type_via_mago(docblock, &[TagKind::PhpstanReturn, TagKind::Return])
 }
 
+/// Like [`extract_return_type`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_return_type_from_info(info: &DocblockInfo) -> Option<String> {
+    extract_type_via_mago_from_info(info, &[TagKind::PhpstanReturn, TagKind::Return])
+}
+
 /// Extract the deprecation message from a `@deprecated` PHPDoc tag.
 ///
 /// Handles common formats:
@@ -56,7 +61,11 @@ pub fn extract_return_type(docblock: &str) -> Option<String> {
 /// Returns `Some("")` when the tag is present but has no message.
 /// Returns `Some("message")` when the tag includes explanatory text.
 pub fn extract_deprecation_message(docblock: &str) -> Option<String> {
-    let info = parse_docblock_for_tags(docblock)?;
+    extract_deprecation_message_from_info(&parse_docblock_for_tags(docblock)?)
+}
+
+/// Like [`extract_deprecation_message`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_deprecation_message_from_info(info: &DocblockInfo) -> Option<String> {
     let tag = info.first_tag_by_kind(TagKind::Deprecated)?;
     Some(tag.description.trim().to_owned())
 }
@@ -67,6 +76,11 @@ pub fn extract_deprecation_message(docblock: &str) -> Option<String> {
 /// sites that only need a boolean check.
 pub fn has_deprecated_tag(docblock: &str) -> bool {
     extract_deprecation_message(docblock).is_some()
+}
+
+/// Like [`has_deprecated_tag`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn has_deprecated_tag_from_info(info: &DocblockInfo) -> bool {
+    extract_deprecation_message_from_info(info).is_some()
 }
 
 /// Extract the PHP version from a `@removed` PHPDoc tag.
@@ -107,6 +121,11 @@ pub fn extract_see_references(docblock: &str) -> Vec<String> {
         return Vec::new();
     };
 
+    extract_see_references_from_info(&info)
+}
+
+/// Like [`extract_see_references`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_see_references_from_info(info: &DocblockInfo) -> Vec<String> {
     info.tags_by_kind(TagKind::See)
         .map(|tag| tag.description.trim().to_owned())
         .filter(|desc| !desc.is_empty())
@@ -129,8 +148,14 @@ pub fn extract_see_references(docblock: &str) -> Vec<String> {
 ///   - `@deprecated Use new API` + two `@see` tags →
 ///     `Some("Use new API (see: NewClass::method(), OtherFunc())")`
 pub fn extract_deprecation_with_see(docblock: &str) -> Option<String> {
-    let base_msg = extract_deprecation_message(docblock)?;
-    let see_refs = extract_see_references(docblock);
+    let info = parse_docblock_for_tags(docblock)?;
+    extract_deprecation_with_see_from_info(&info)
+}
+
+/// Like [`extract_deprecation_with_see`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_deprecation_with_see_from_info(info: &DocblockInfo) -> Option<String> {
+    let base_msg = extract_deprecation_message_from_info(info)?;
+    let see_refs = extract_see_references_from_info(info);
 
     if see_refs.is_empty() {
         return Some(base_msg);
@@ -163,6 +188,11 @@ pub fn extract_mixin_tags(docblock: &str) -> Vec<(String, Vec<String>)> {
         return Vec::new();
     };
 
+    extract_mixin_tags_from_info(&info)
+}
+
+/// Like [`extract_mixin_tags`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_mixin_tags_from_info(info: &DocblockInfo) -> Vec<(String, Vec<String>)> {
     let mut results = Vec::new();
 
     for tag in info.tags_by_kind(TagKind::Mixin) {
@@ -219,6 +249,11 @@ pub fn extract_throws_tags(docblock: &str) -> Vec<String> {
         return Vec::new();
     };
 
+    extract_throws_tags_from_info(&info)
+}
+
+/// Like [`extract_throws_tags`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_throws_tags_from_info(info: &DocblockInfo) -> Vec<String> {
     let mut results = Vec::new();
 
     for tag in info.tags_by_kind(TagKind::Throws) {
@@ -259,6 +294,11 @@ pub fn extract_type_assertions(docblock: &str) -> Vec<TypeAssertion> {
         return Vec::new();
     };
 
+    extract_type_assertions_from_info(&info)
+}
+
+/// Like [`extract_type_assertions`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_type_assertions_from_info(info: &DocblockInfo) -> Vec<TypeAssertion> {
     /// Map a `TagKind` to the corresponding `AssertionKind`.
     const fn assertion_kind_for(kind: TagKind) -> AssertionKind {
         match kind {
@@ -331,6 +371,11 @@ pub fn extract_var_type(docblock: &str) -> Option<String> {
     extract_type_via_mago(docblock, &[TagKind::PhpstanVar, TagKind::Var])
 }
 
+/// Like [`extract_var_type`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_var_type_from_info(info: &DocblockInfo) -> Option<String> {
+    extract_type_via_mago_from_info(info, &[TagKind::PhpstanVar, TagKind::Var])
+}
+
 /// Extract the type and optional variable name from a `@var` PHPDoc tag.
 ///
 /// Handles both inline annotation formats:
@@ -340,8 +385,11 @@ pub fn extract_var_type(docblock: &str) -> Option<String> {
 /// The variable name (if present) is returned **with** the `$` prefix so
 /// callers can compare directly against AST variable names.
 pub fn extract_var_type_with_name(docblock: &str) -> Option<(String, Option<String>)> {
-    let info = parse_docblock_for_tags(docblock)?;
+    extract_var_type_with_name_from_info(&parse_docblock_for_tags(docblock)?)
+}
 
+/// Like [`extract_var_type_with_name`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_var_type_with_name_from_info(info: &DocblockInfo) -> Option<(String, Option<String>)> {
     for tag in info.tags_by_kinds(&[TagKind::PhpstanVar, TagKind::Var]) {
         let desc = tag.description.trim();
         if desc.is_empty() {
@@ -511,8 +559,11 @@ pub fn find_var_raw_type_in_source(
 ///   docblock containing `@param list<User> $users` with var_name `"$users"`
 ///   → `Some("list<User>")`
 pub fn extract_param_raw_type(docblock: &str, var_name: &str) -> Option<String> {
-    let info = parse_docblock_for_tags(docblock)?;
+    extract_param_raw_type_from_info(&parse_docblock_for_tags(docblock)?, var_name)
+}
 
+/// Like [`extract_param_raw_type`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_param_raw_type_from_info(info: &DocblockInfo, var_name: &str) -> Option<String> {
     for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
         let desc = tag.description.trim();
         if desc.is_empty() {
@@ -549,6 +600,11 @@ pub fn extract_all_param_tags(docblock: &str) -> Vec<(String, String)> {
         return Vec::new();
     };
 
+    extract_all_param_tags_from_info(&info)
+}
+
+/// Like [`extract_all_param_tags`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_all_param_tags_from_info(info: &DocblockInfo) -> Vec<(String, String)> {
     let mut results = Vec::new();
 
     // Only match `@param` and `@phpstan-param`, not compound tags like
@@ -591,6 +647,11 @@ pub fn extract_param_closure_this(docblock: &str) -> Vec<(String, String)> {
         return Vec::new();
     };
 
+    extract_param_closure_this_from_info(&info)
+}
+
+/// Like [`extract_param_closure_this`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_param_closure_this_from_info(info: &DocblockInfo) -> Vec<(String, String)> {
     let mut results = Vec::new();
 
     for tag in info.tags_by_kind(TagKind::ParamClosureThis) {
@@ -629,8 +690,11 @@ pub fn extract_param_closure_this(docblock: &str) -> Vec<(String, String)> {
 ///   `@param callable|null $callback Callback function to run for each element.`
 ///   with var_name `"$callback"` → `Some("Callback function to run for each element.")`
 pub fn extract_param_description(docblock: &str, var_name: &str) -> Option<String> {
-    let info = parse_docblock_for_tags(docblock)?;
+    extract_param_description_from_info(&parse_docblock_for_tags(docblock)?, var_name)
+}
 
+/// Like [`extract_param_description`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_param_description_from_info(info: &DocblockInfo, var_name: &str) -> Option<String> {
     for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::Param]) {
         let desc = tag.description.trim();
         if desc.is_empty() {
@@ -655,7 +719,7 @@ pub fn extract_param_description(docblock: &str, var_name: &str) -> Option<Strin
         // mago-docblock joins multi-line tag descriptions with `\n`.
         // The old code joined continuation lines with spaces, so
         // normalise newlines to spaces to preserve existing behaviour.
-        let normalised = after_name.replace('\n', " ");
+        let normalised = collapse_newlines(after_name);
         let cleaned = strip_html_tags(&normalised);
         let desc = cleaned.trim().to_string();
         if desc.is_empty() {
@@ -679,8 +743,11 @@ pub fn extract_param_description(docblock: &str, var_name: &str) -> Option<Strin
 ///   `@return array an array containing all the elements`
 ///   → `Some("an array containing all the elements")`
 pub fn extract_return_description(docblock: &str) -> Option<String> {
-    let info = parse_docblock_for_tags(docblock)?;
+    extract_return_description_from_info(&parse_docblock_for_tags(docblock)?)
+}
 
+/// Like [`extract_return_description`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_return_description_from_info(info: &DocblockInfo) -> Option<String> {
     for tag in info.tags_by_kinds(&[TagKind::PhpstanReturn, TagKind::Return]) {
         let desc = tag.description.trim();
         if desc.is_empty() {
@@ -699,7 +766,7 @@ pub fn extract_return_description(docblock: &str) -> Option<String> {
         // mago-docblock joins multi-line tag descriptions with `\n`.
         // The old code joined continuation lines with spaces, so
         // normalise newlines to spaces to preserve existing behaviour.
-        let normalised = remainder.replace('\n', " ");
+        let normalised = collapse_newlines(remainder);
         let cleaned = strip_html_tags(&normalised);
         let result = cleaned.trim().to_string();
         if result.is_empty() {
@@ -721,6 +788,11 @@ pub fn extract_link_urls(docblock: &str) -> Vec<String> {
         return Vec::new();
     };
 
+    extract_link_urls_from_info(&info)
+}
+
+/// Like [`extract_link_urls`], but operates on a pre-parsed [`DocblockInfo`].
+pub fn extract_link_urls_from_info(info: &DocblockInfo) -> Vec<String> {
     let mut urls = Vec::new();
 
     for tag in info.tags_by_kind(TagKind::Link) {
@@ -1279,6 +1351,22 @@ pub fn get_docblock_text_for_node<'a>(
     None
 }
 
+/// Locate the docblock for an AST node and return it as a parsed
+/// [`DocblockInfo`].
+///
+/// This combines [`get_docblock_text_for_node`] and
+/// [`parse_docblock_for_tags`] into a single call, eliminating
+/// redundant re-parsing when multiple tags need to be extracted from
+/// the same docblock.
+pub fn get_docblock_info_for_node(
+    trivia: &[Trivia<'_>],
+    content: &str,
+    node: &impl HasSpan,
+) -> Option<DocblockInfo> {
+    let text = get_docblock_text_for_node(trivia, content, node)?;
+    parse_docblock_for_tags(text)
+}
+
 // ─── Effective Type Resolution ──────────────────────────────────────────────
 
 /// Pick the best available type between a native type hint and a docblock
@@ -1383,8 +1471,11 @@ fn count_braces_on_line(line: &str) -> (i32, i32) {
 ///
 /// Skips PHPStan conditional return types (descriptions starting with `(`).
 fn extract_type_via_mago(docblock: &str, kinds: &[TagKind]) -> Option<String> {
-    let info = parse_docblock_for_tags(docblock)?;
+    extract_type_via_mago_from_info(&parse_docblock_for_tags(docblock)?, kinds)
+}
 
+/// Like [`extract_type_via_mago`], but operates on a pre-parsed [`DocblockInfo`].
+fn extract_type_via_mago_from_info(info: &DocblockInfo, kinds: &[TagKind]) -> Option<String> {
     // Try each kind in priority order; return on the first match.
     for &kind in kinds {
         for tag in info.tags_by_kind(kind) {
@@ -1400,10 +1491,12 @@ fn extract_type_via_mago(docblock: &str, kinds: &[TagKind]) -> Option<String> {
             }
 
             // mago-docblock joins multi-line tag descriptions with `\n`.
-            // Normalise newlines to spaces so that `split_type_token` and
-            // `clean_type` see the same single-line input the old code
-            // produced after joining continuation lines.
-            let normalised = desc.replace('\n', " ");
+            // Normalise newlines (and surrounding whitespace from
+            // indentation) into a single space so that `split_type_token`
+            // and `clean_type` see the same single-line input the old
+            // line-by-line scanner produced after trimming and joining
+            // continuation lines.
+            let normalised = collapse_newlines(desc);
             let (type_str, _remainder) = split_type_token(&normalised);
             if type_str.is_empty() {
                 continue;
@@ -1416,23 +1509,7 @@ fn extract_type_via_mago(docblock: &str, kinds: &[TagKind]) -> Option<String> {
     None
 }
 
-/// Parse a docblock string into a [`DocblockInfo`] with a zero-offset span.
-///
-/// This is the standard entry point for all tag extraction functions that
-/// receive a raw `&str` docblock.  The span is set to cover the entire
-/// string starting at offset 0, which is correct for standalone extraction
-/// (the spans are only meaningful when the caller needs source positions).
-fn parse_docblock_for_tags(docblock: &str) -> Option<super::parser::DocblockInfo> {
-    use mago_database::file::FileId;
-    use mago_span::Position;
 
-    let span = mago_span::Span::new(
-        FileId::zero(),
-        Position::new(0),
-        Position::new(docblock.len() as u32),
-    );
-    parse_docblock(docblock, span)
-}
 
 /// Check whether a type string has unclosed `<…>` or `{…}` brackets.
 fn has_unclosed_brackets(s: &str) -> bool {
